@@ -1,45 +1,14 @@
-                stage('validate: manifest') {
-                    logStage('validate-manifest')
-                    script {
-                        // Load YAML from shared library
-                        def yamlText = libraryResource 'foundation-manifests.yml'
-                        def foundationManifests = readYaml text: yamlText
-
-                        // Resolve manifests for the selected foundation
-                        manifestList = foundationManifests[pcfFoundation]
-
-                        if (!manifestList) {
-                            error "❌ No manifest mapping found for PCF foundation: ${pcfFoundation}"
-                        }
-
-                        echo "✅ Resolved manifest(s) for ${pcfFoundation}: ${manifestList}"
-
-                        // Validate each manifest
-                        manifestList.each { manifestFile ->
-                            echo "🔍 Validating manifest: ${manifestFile}"
-                            if (fileExists(manifestFile)) {
-                                validateSplunkIndex(manifestFile, 'prod')
-                            } else {
-                                buildFailed("❌ No manifest file found: ${manifestFile}")
-                            }
-                        }
-                    }
-                }
-
-
-
-
-          // UDeploy: Import Artifact Stage
-                // ----------------------------
-                stage('udeploy: import-artifact') {
-                    logStage('udeploy-import-artifact')
-                    script {
-                        manifestList.each { manifestFile ->
-                            echo "🚀 Importing artifact with manifest: ${manifestFile}"
-                            if (!fileExists(manifestFile)) {
-                                error "❌ Manifest file not found during import: ${manifestFile}"
-                            }
-                            uDeployDevVersionImport(gitRepositoryName, appVersion, manifestFile, pcfRoute)
-                        }
-                    }
-                }
+east-1-dev1: manifest-dev1-east1.yml
+east-2-dev1: manifest-dev1-east2.yml
+dev-east: manifest-dev-east.yml
+dev-west: manifest-dev-west.yml
+qa-east: manifest-qa-east.yml
+qa-west: manifest-qa-west.yml
+uat-east: manifest-uat-east.yml
+uat-west: manifest-uat-west.yml
+qa-dal: manifest-qa-dal.yml
+qa-phx: manifest-qa-phx.yml
+uat-dal: manifest-uat-dal.yml
+uat-phx: manifest-uat-phx.yml
+prod-dal: manifest-prod-dal.yml
+prod-phx: manifest-prod-phx.yml
