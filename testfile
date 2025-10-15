@@ -1,14 +1,39 @@
-east-1-dev1: manifest-dev1-east1.yml
-east-2-dev1: manifest-dev1-east2.yml
-dev-east: manifest-dev-east.yml
-dev-west: manifest-dev-west.yml
-qa-east: manifest-qa-east.yml
-qa-west: manifest-qa-west.yml
-uat-east: manifest-uat-east.yml
-uat-west: manifest-uat-west.yml
-qa-dal: manifest-qa-dal.yml
-qa-phx: manifest-qa-phx.yml
-uat-dal: manifest-uat-dal.yml
-uat-phx: manifest-uat-phx.yml
-prod-dal: manifest-prod-dal.yml
-prod-phx: manifest-prod-phx.yml
+// vars/getFoundationManifests.groovy
+
+def call(String pcfFoundation) {
+    // Load YAML from shared library resources
+    // Updated path to reflect your folder structure
+    def yamlText = libraryResource('pipeline-global-config/foundation-manifests.yml')
+    def foundationManifests = readYaml text: yamlText
+
+    // Get manifest(s) for the requested foundation
+    def manifestList = foundationManifests[pcfFoundation]
+
+    if (!manifestList) {
+        error "❌ No manifest mapping found for PCF foundation: ${pcfFoundation}"
+    }
+
+    echo "✅ Resolved manifest(s) for ${pcfFoundation}: ${manifestList}"
+    
+    return manifestList
+}
+
+
+
+stage('validate: manifest') {
+    logStage('validate-manifest')
+    script {
+        // Call shared library function to get manifest list
+        def manifestList = getFoundationManifests(pcfFoundation)
+
+        // Validate each manifest
+        manifestList.each { manifestFile ->
+            echo "🔍 Validating manifest: ${manifestFile}"
+            if (fileExists(manifestFile)) {
+                validateSplunkIndex(manifestFile, 'prod')
+            } else {
+                buildFailed("❌ No manifest file found: ${manifestFile}")
+            }
+        }
+    }
+}
