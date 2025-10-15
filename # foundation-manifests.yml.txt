@@ -1,0 +1,144 @@
+# foundation-manifests.yml
+east-1-dev1:
+  - manifest-dev1-east1.yml
+  - manifest-db-east1.yml
+
+east-2-dev1:
+  - manifest-dev1-east2.yml
+
+dev-east:
+  - manifest-dev-east.yml
+
+dev-west:
+  - manifest-dev-west.yml
+
+qa-east:
+  - manifest-qa-east.yml
+
+qa-west:
+  - manifest-qa-west.yml
+
+qa-dal:
+  - manifest-qa-dal.yml
+
+qa-phx:
+  - manifest-qa-phx.yml
+
+uat-east:
+  - manifest-uat-east.yml
+
+uat-west:
+  - manifest-uat-west.yml
+
+uat-dal:
+  - manifest-uat-dal.yml
+
+uat-phx:
+  - manifest-uat-phx.yml
+
+prod-dal:
+  - manifest-prod-dal.yml
+
+prod-phx:
+  - manifest-prod-phx.yml
+
+
+
+-------------------
+
+// ---- Add this stage just before 'validate: manifest' ----
+stage('resolve: manifests') {
+    echo "🔍 Resolving manifests for foundation: ${pcfFoundation}"
+    // read YAML config into a Groovy map
+    def manifestMap = [:]
+    try {
+        manifestMap = readYaml file: 'foundation-manifests.yml'
+    } catch (ex) {
+        error "Could not read foundation-manifests.yml: ${ex}"
+    }
+
+    def foundationKey = pcfFoundation?.trim()
+    if (!foundationKey) {
+        error "pcfFoundation parameter is empty"
+    }
+
+    def manifestList = manifestMap[foundationKey]
+    if (!manifestList) {
+        error "No manifest list found in foundation-manifests.yml for '${foundationKey}'"
+    }
+
+    // Save list as a string env var for later use, and also keep a Groovy list variable
+    env.PCF_MANIFEST_LIST = manifestList.join(',')
+    // keep local variable for immediate pipeline usage if desired
+    echo "✅ Manifests for ${foundationKey}: ${manifestList.join(', ')}"
+}
+
+
+
+
+----------------
+
+
+
+stage('validate: manifest') {
+    echo 'logStage: validate-manifest'
+    script {
+        // Get manifest list from env (or re-read YAML if you prefer)
+        def manifestList = []
+        if (env.PCF_MANIFEST_LIST) {
+            manifestList = env.PCF_MANIFEST_LIST.split(',').collect { it.trim() }.findAll { it }
+        } else {
+            // fallback: re-read YAML to get the list
+            def manifestMap = readYaml file: 'foundation-manifests.yml'
+            manifestList = manifestMap[pcfFoundation]?.toList() ?: []
+        }
+
+        if (!manifestList) {
+            error "No manifests resolved for foundation: ${pcfFoundation}"
+        }
+
+        // For each manifest file, check if it exists and call validateSplunkIndex
+        manifestList.each { manifestFile ->
+            echo "🔎 Checking manifest ${manifestFile}"
+            if (fileExists(manifestFile)) {
+                // your existing validation function - keep same args
+                validateSplunkIndex(manifestFile, 'prod')
+            } else {
+                // choose behavior: fail immediately, or warn and continue.
+                // I recommend failing so missing manifest won't silently pass
+                error "No manifest file found: ${manifestFile}"
+            }
+        }
+    }
+}
+
+
+--------------------
+
+
+
+stage('udeploy: import-artifact') {
+    echo 'logStage: udeploy-import-artifact'
+    script {
+        def manifestList = env.PCF_MANIFEST_LIST?.split(',')?.collect { it.trim() } ?: []
+        if (!manifestList) {
+            // fallback: re-read YAML
+            def manifestMap = readYaml file: 'foundation-manifests.yml'
+            manifestList = manifestMap[pcfFoundation] ?: []
+        }
+
+        if (!manifestList) {
+            error "No manifests to import for foundation: ${pcfFoundation}"
+        }
+
+        // Loop through manifests and call the shared library import for each
+        manifestList.each { manifestFile ->
+            echo "🚀 Importing artifact using manifest: ${manifestFile}"
+            if (!fileExists(manifestFile)) {
+                error "Manifest file not found at import time: ${manifestFile}"
+            }
+            // call your shared library - same signature you used earlier
+            uDeployDevVersionImport(gitRepositoryName, appVersion, manifestFile, pcfRoute)
+        }
+    }
+}
