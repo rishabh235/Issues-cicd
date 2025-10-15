@@ -1,1 +1,45 @@
+                stage('validate: manifest') {
+                    logStage('validate-manifest')
+                    script {
+                        // Load YAML from shared library
+                        def yamlText = libraryResource 'foundation-manifests.yml'
+                        def foundationManifests = readYaml text: yamlText
 
+                        // Resolve manifests for the selected foundation
+                        manifestList = foundationManifests[pcfFoundation]
+
+                        if (!manifestList) {
+                            error "❌ No manifest mapping found for PCF foundation: ${pcfFoundation}"
+                        }
+
+                        echo "✅ Resolved manifest(s) for ${pcfFoundation}: ${manifestList}"
+
+                        // Validate each manifest
+                        manifestList.each { manifestFile ->
+                            echo "🔍 Validating manifest: ${manifestFile}"
+                            if (fileExists(manifestFile)) {
+                                validateSplunkIndex(manifestFile, 'prod')
+                            } else {
+                                buildFailed("❌ No manifest file found: ${manifestFile}")
+                            }
+                        }
+                    }
+                }
+
+
+
+
+          // UDeploy: Import Artifact Stage
+                // ----------------------------
+                stage('udeploy: import-artifact') {
+                    logStage('udeploy-import-artifact')
+                    script {
+                        manifestList.each { manifestFile ->
+                            echo "🚀 Importing artifact with manifest: ${manifestFile}"
+                            if (!fileExists(manifestFile)) {
+                                error "❌ Manifest file not found during import: ${manifestFile}"
+                            }
+                            uDeployDevVersionImport(gitRepositoryName, appVersion, manifestFile, pcfRoute)
+                        }
+                    }
+                }
