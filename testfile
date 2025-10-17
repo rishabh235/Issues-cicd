@@ -1,39 +1,50 @@
-// vars/getFoundationManifests.groovy
+east-1-dev1: dev1-east1.yml
+east-2-dev1: dev1-east2.yml
+dev-east: dev-east.yml
+dev-west: dev-west.yml
+qa-east: qa-east.yml
+qa-west: qa-west.yml
+uat-east: uat-east.yml
+uat-west: uat-west.yml
+prod-dal: prod-dal.yml
+prod-phx: prod-phx.yml
 
-def call(String pcfFoundation) {
-    // Load YAML from shared library resources
-    // Updated path to reflect your folder structure
+
+
+
+-------------
+
+// vars/getFoundationManifests.groovy
+def call(String pcfFoundation, String fileType = "manifest") {
     def yamlText = libraryResource('pipeline-global-config/foundation-manifests.yml')
     def foundationManifests = readYaml text: yamlText
 
-    // Get manifest(s) for the requested foundation
     def manifestList = foundationManifests[pcfFoundation]
 
     if (!manifestList) {
-        error "❌ No manifest mapping found for PCF foundation: ${pcfFoundation}"
+        error "❌ No mapping found for PCF foundation: ${pcfFoundation}"
     }
 
-    echo "✅ Resolved manifest(s) for ${pcfFoundation}: ${manifestList}"
-    
+    // Ensure list format
+    if (manifestList instanceof String) {
+        manifestList = [manifestList]
+    }
+
+    // Add prefix dynamically based on file type
+    manifestList = manifestList.collect { fileName ->
+        return "${fileType}-${fileName}"
+    }
+
+    echo "✅ Resolved ${fileType} file(s) for ${pcfFoundation}: ${manifestList}"
     return manifestList
 }
 
 
+-------------
 
-stage('validate: manifest') {
-    logStage('validate-manifest')
-    script {
-        // Call shared library function to get manifest list
-        def manifestList = getFoundationManifests(pcfFoundation)
+in jenkins file, the pipeline using manifest use
+def manifestList = getFoundationManifests(pcfFoundation)
 
-        // Validate each manifest
-        manifestList.each { manifestFile ->
-            echo "🔍 Validating manifest: ${manifestFile}"
-            if (fileExists(manifestFile)) {
-                validateSplunkIndex(manifestFile, 'prod')
-            } else {
-                buildFailed("❌ No manifest file found: ${manifestFile}")
-            }
-        }
-    }
-}
+whihc uses vars
+
+def varsList = getFoundationManifests(pcfFoundation, "vars")
