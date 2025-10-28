@@ -1,66 +1,49 @@
-# =====================
-# VARS FILES
-# =====================
-vars:
-  east-1-dev1: vars-dev1-east1.yml
-  east-2-dev1: vars-dev1-east2.yml
-  dev-east: vars-dev-east.yml
-  dev-west: vars-dev-west.yml
-  qa-east: vars-qa-east.yml
-  qa-west: vars-qa-west.yml
-  uat-east: vars-uat-east.yml
-  uat-west: vars-uat-west.yml
-  prod-dal: vars-prod-dal.yml
-  prod-phx: vars-prod-phx.yml
+stage('validate: manifest') {
+    logStage('validate-manifest')
+    script {
+        // 🟩 Step 1: Dynamically fetch manifests for the selected foundation
+        def manifestList = getFoundationManifests(pcfFoundation, "manifest")
 
-# =====================
-# MANIFEST FILES
-# =====================
-manifest:
-  east-1-dev1: manifest-dev1-east1.yml
-  east-2-dev1: manifest-dev1-east2.yml
-  dev-east: manifest-dev-east.yml
-  dev-west: manifest-dev-west.yml
-  qa-east: manifest-qa-east.yml
-  qa-west: manifest-qa-west.yml
-  qa-dal: manifest-qa-dal.yml
-  qa-phx: manifest-qa-phx.yml
-  uat-east: manifest-uat-east.yml
-  uat-west: manifest-uat-west.yml
-  uat-dal: manifest-uat-dal.yml
-  uat-phx: manifest-uat-phx.yml
-  prod-dal: manifest-prod-dal.yml
-  prod-phx: manifest-prod-phx.yml
+        // Normalize to list (in case only one file is returned)
+        def manifests = (manifestList instanceof List) ? manifestList : [manifestList]
 
-
-
-
-
-
-
-===================================
-
-def call(String pcfFoundation, String fileType = "manifest") {
-    // Load YAML file from shared library
-    def yamlText = libraryResource('pipeline-global-config/foundation-manifests.yml')
-    def foundationData = readYaml text: yamlText
-
-    // Validate section (vars or manifest)
-    if (!foundationData.containsKey(fileType)) {
-        error "❌ Invalid fileType '${fileType}'. Must be either 'vars' or 'manifest'."
+        // 🟩 Step 2: Validate each manifest for the selected foundation
+        manifests.each { manifestFile ->
+            echo "🔍 Validating manifest: ${manifestFile}"
+            if (fileExists(manifestFile)) {
+                validateSplunkIndex(manifestFile, 'dev')
+            } else {
+                buildFailed("❌ No manifest file found: ${manifestFile}")
+            }
+        }
     }
+}
 
-    def sectionData = foundationData[fileType]
 
-    // Get foundation entry
-    def manifestFile = sectionData[pcfFoundation]
-    if (!manifestFile) {
-        error "❌ No mapping found for foundation '${pcfFoundation}' under '${fileType}' section."
+
+=======================
+
+stage('udeploy: Import-artifact') {
+    logStage('udeploy-import-artifact') {
+        script {
+            // You can control this using a pipeline parameter or logic
+            // e.g. fileType = "vars" or "manifest"
+            def fileType = "manifest"  // 🔹 change to "vars" if that pipeline uses vars type
+
+            def pcfManifestFile = ""
+
+            if (pcfFoundation.equalsIgnoreCase('east-1-dev1')) {
+                pcfManifestFile = getFoundationManifests('east-1-dev1', fileType)[0]
+            } else if (pcfFoundation.equalsIgnoreCase('east-2-dev1')) {
+                pcfManifestFile = getFoundationManifests('east-2-dev1', fileType)[0]
+            } else {
+                pcfManifestFile = getFoundationManifests('dev-west', fileType)[0]
+            }
+
+            echo "📦 Using ${fileType} file for ${pcfFoundation}: ${pcfManifestFile}"
+
+            // Pass to your import function
+            uDeployDevVersionImport(gitRepositoryName, appVersion, pcfManifestFile, pcfRoute)
+        }
     }
-
-    // Always return as a list (for consistent processing)
-    def manifestList = (manifestFile instanceof String) ? [manifestFile] : manifestFile
-
-    echo "✅ Resolved ${fileType} file(s) for foundation '${pcfFoundation}': ${manifestList.join(', ')}"
-    return manifestList
 }
