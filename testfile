@@ -1,50 +1,66 @@
-east-1-dev1: dev1-east1.yml
-east-2-dev1: dev1-east2.yml
-dev-east: dev-east.yml
-dev-west: dev-west.yml
-qa-east: qa-east.yml
-qa-west: qa-west.yml
-uat-east: uat-east.yml
-uat-west: uat-west.yml
-prod-dal: prod-dal.yml
-prod-phx: prod-phx.yml
+# =====================
+# VARS FILES
+# =====================
+vars:
+  east-1-dev1: vars-dev1-east1.yml
+  east-2-dev1: vars-dev1-east2.yml
+  dev-east: vars-dev-east.yml
+  dev-west: vars-dev-west.yml
+  qa-east: vars-qa-east.yml
+  qa-west: vars-qa-west.yml
+  uat-east: vars-uat-east.yml
+  uat-west: vars-uat-west.yml
+  prod-dal: vars-prod-dal.yml
+  prod-phx: vars-prod-phx.yml
+
+# =====================
+# MANIFEST FILES
+# =====================
+manifest:
+  east-1-dev1: manifest-dev1-east1.yml
+  east-2-dev1: manifest-dev1-east2.yml
+  dev-east: manifest-dev-east.yml
+  dev-west: manifest-dev-west.yml
+  qa-east: manifest-qa-east.yml
+  qa-west: manifest-qa-west.yml
+  qa-dal: manifest-qa-dal.yml
+  qa-phx: manifest-qa-phx.yml
+  uat-east: manifest-uat-east.yml
+  uat-west: manifest-uat-west.yml
+  uat-dal: manifest-uat-dal.yml
+  uat-phx: manifest-uat-phx.yml
+  prod-dal: manifest-prod-dal.yml
+  prod-phx: manifest-prod-phx.yml
 
 
 
 
--------------
 
-// vars/getFoundationManifests.groovy
+
+
+===================================
+
 def call(String pcfFoundation, String fileType = "manifest") {
+    // Load YAML file from shared library
     def yamlText = libraryResource('pipeline-global-config/foundation-manifests.yml')
-    def foundationManifests = readYaml text: yamlText
+    def foundationData = readYaml text: yamlText
 
-    def manifestList = foundationManifests[pcfFoundation]
-
-    if (!manifestList) {
-        error "❌ No mapping found for PCF foundation: ${pcfFoundation}"
+    // Validate section (vars or manifest)
+    if (!foundationData.containsKey(fileType)) {
+        error "❌ Invalid fileType '${fileType}'. Must be either 'vars' or 'manifest'."
     }
 
-    // Ensure list format
-    if (manifestList instanceof String) {
-        manifestList = [manifestList]
+    def sectionData = foundationData[fileType]
+
+    // Get foundation entry
+    def manifestFile = sectionData[pcfFoundation]
+    if (!manifestFile) {
+        error "❌ No mapping found for foundation '${pcfFoundation}' under '${fileType}' section."
     }
 
-    // Add prefix dynamically based on file type
-    manifestList = manifestList.collect { fileName ->
-        return "${fileType}-${fileName}"
-    }
+    // Always return as a list (for consistent processing)
+    def manifestList = (manifestFile instanceof String) ? [manifestFile] : manifestFile
 
-    echo "✅ Resolved ${fileType} file(s) for ${pcfFoundation}: ${manifestList}"
+    echo "✅ Resolved ${fileType} file(s) for foundation '${pcfFoundation}': ${manifestList.join(', ')}"
     return manifestList
 }
-
-
--------------
-
-in jenkins file, the pipeline using manifest use
-def manifestList = getFoundationManifests(pcfFoundation)
-
-whihc uses vars
-
-def varsList = getFoundationManifests(pcfFoundation, "vars")
