@@ -84,6 +84,37 @@ manifest:
   UAT1East1: manifest-uat1-east1.yml
   UAT1East2: manifest-uat1-east2.yml
 
+
+def call(pcfFoundation, fileType = "manifest") {
+
+    // Load YAML from shared library
+    def yamlText = libraryResource('pipeline-global-config/foundation-manifests.yml')
+    def foundationData = readYaml(text: yamlText)
+
+    // Validate section exists (vars/manifest)
+    if (!foundationData.containsKey(fileType)) {
+        buildFailed("Invalid fileType '${fileType}'. Allowed: vars, manifest")
+    }
+
+    def sectionData = foundationData[fileType]
+
+    // Validate foundation key exists
+    if (!sectionData.containsKey(pcfFoundation)) {
+        buildFailed("No mapping found for foundation '${pcfFoundation}' under '${fileType}' section")
+    }
+
+    def item = sectionData[pcfFoundation]
+
+    // ALWAYS return a list
+    def manifestList = (item instanceof String) ? [item] : item
+
+    // Use println instead of echo (lead requirement)
+    println "Resolved ${fileType} file(s) for ${pcfFoundation}: ${manifestList.join(",")}"
+
+    return manifestList
+}
+
+
   # --- PROD ---
   ProdDal: manifest-prod-dal.yml
   ProdPhx: manifest-prod-phx.yml
