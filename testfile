@@ -1,120 +1,82 @@
+def call(String fileType = 'manifest') {
+
+    def yamlText = libraryResource('pipeline-global-config/foundation-manifest-prod.yml')
+    def foundationData = readYaml(text: yamlText)
+
+    def section = foundationData[fileType]
+    if (!section) {
+        buildFailed("Section '${fileType}' not found in foundation-manifest-prod.yml")
+    }
+
+    println "Loaded ${section.size()} entries for '${fileType}'"
+    return section
+}
+
+
 stage('validate: manifest') {
-    logStage('validate-manifest')
+    logStage("validate-manifest") {
 
-    def manifestList = getFoundationManifests(pcfFoundation, "vars")
+        def fileType = 'manifest'    // or "vars" based on pipeline
+        def manifestMap = getManifestsMap(fileType)
 
-    manifestList.each { manifestFile ->
-        println "Validating manifest: ${manifestFile}"
+        manifestMap.each { suffix, pcfManifest ->
 
-        if (fileExists(manifestFile)) {
-            validateSplunkIndex(manifestFile, 'prod')   // ✅ Do NOT change logic
-        } else {
-            buildFailed("No manifest file found: ${manifestFile}")
+            println "Validating ${suffix} => ${pcfManifest}"
+
+            def envType = (suffix == 'ProdDal' || suffix == 'ProdPhx') ? 'np' : 'prod'
+
+            if (fileExists(pcfManifest)) {
+                println "Validating with splunk indextype: ${envType}"
+                validateSplunkIndex(pcfManifest, envType)
+            } else {
+                buildFailed("No manifest file found: ${pcfManifest}")
+            }
         }
     }
 }
 
 
+stage('udeploy: import-artifact') {
+    logStage('udeploy-import-artifact') {
 
-stage('udeploy: import artifact') {
-    logStage('udeploy-import-artifact')
+        def fileType = 'manifest'   // or 'vars'
 
-    def fileType = "vars"
-    def pcfManifestFile
+        def manifestMap = getManifestsMap(fileType)
 
-    if (pcfFoundation.equalsIgnoreCase("east-1-dev1")) {
-        pcfManifestFile = getFoundationManifests("east-1-dev1", fileType)[0]
+        // These suffixes MUST match the parameter order of your existing uDeploy function
+        def expectedSuffixes = [
+            'QAEast', 'QAWest',
+            'QA1East1', 'QA1East2',
+            'UATEast', 'UATWest',
+            'UAT1East1', 'UAT1East2',
+            'ProdDal', 'ProdPhx'
+        ]
 
-    } else if (pcfFoundation.equalsIgnoreCase("east-2-dev1")) {
-        pcfManifestFile = getFoundationManifests("east-2-dev1", fileType)[0]
+        expectedSuffixes.each { suffix ->
+            def varName = "pcfManifestFile${suffix}"
+            def value = manifestMap.containsKey(suffix) ? manifestMap[suffix] : ''
+            this."${varName}" = value
+            println "Set ${varName} = ${value}"
+        }
 
-    } else {
-        pcfManifestFile = getFoundationManifests("dev-west", fileType)[0]
+        uDeployProdVersionImportAWS(
+            gitProjectKey,
+            gitRepositoryName,
+            appVersion,
+            pcfManifestFileQAEast,
+            pcfManifestFileQAWest,
+            pcfManifestFileQA1East1,
+            pcfManifestFileQA1East2,
+            pcfManifestFileUATEast,
+            pcfManifestFileUATWest,
+            pcfManifestFileUAT1East1,
+            pcfManifestFileUAT1East2,
+            pcfManifestFileProdDal,
+            pcfManifestFileProdPhx
+        )
     }
-
-    println "Using ${fileType} file for ${pcfFoundation}: ${pcfManifestFile}"
-
-    uDeployDevVersionImport(
-        gitRepositoryName,
-        appVersion,
-        pcfManifestFile,
-        pcfRoute
-    )
 }
 
 
 
-vars:
-  # --- DEV ---
-  east-1-dev1: vars-east1-dev1.yml
-  east-2-dev1: vars-east2-dev1.yml
-  dev-west: vars-dev-west.yml
 
-  # --- QA ---
-  QAEast: vars-qa-east.yml
-  QAWest: vars-qa-west.yml
-  QA1East1: vars-qa1-east1.yml
-  QA1East2: vars-qa1-east2.yml
-
-  # --- UAT ---
-  UATEast: vars-uat-east.yml
-  UATWest: vars-uat-west.yml
-  UAT1East1: vars-uat1-east1.yml
-  UAT1East2: vars-uat1-east2.yml
-
-  # --- PROD ---
-  ProdDal: vars-prod-dal.yml
-  ProdPhx: vars-prod-phx.yml
-
-manifest:
-  # --- DEV ---
-  east-1-dev1: manifest-east1-dev1.yml
-  east-2-dev1: manifest-east2-dev1.yml
-  dev-west: manifest-dev-west.yml
-
-  # --- QA ---
-  QAEast: manifest-qa-east.yml
-  QAWest: manifest-qa-west.yml
-  QA1East1: manifest-qa1-east1.yml
-  QA1East2: manifest-qa1-east2.yml
-
-  # --- UAT ---
-  UATEast: manifest-uat-east.yml
-  UATWest: manifest-uat-west.yml
-  UAT1East1: manifest-uat1-east1.yml
-  UAT1East2: manifest-uat1-east2.yml
-
-
-def call(pcfFoundation, fileType = "manifest") {
-
-    // Load YAML from shared library
-    def yamlText = libraryResource('pipeline-global-config/foundation-manifests.yml')
-    def foundationData = readYaml(text: yamlText)
-
-    // Validate section exists (vars/manifest)
-    if (!foundationData.containsKey(fileType)) {
-        buildFailed("Invalid fileType '${fileType}'. Allowed: vars, manifest")
-    }
-
-    def sectionData = foundationData[fileType]
-
-    // Validate foundation key exists
-    if (!sectionData.containsKey(pcfFoundation)) {
-        buildFailed("No mapping found for foundation '${pcfFoundation}' under '${fileType}' section")
-    }
-
-    def item = sectionData[pcfFoundation]
-
-    // ALWAYS return a list
-    def manifestList = (item instanceof String) ? [item] : item
-
-    // Use println instead of echo (lead requirement)
-    println "Resolved ${fileType} file(s) for ${pcfFoundation}: ${manifestList.join(",")}"
-
-    return manifestList
-}
-
-
-  # --- PROD ---
-  ProdDal: manifest-prod-dal.yml
-  ProdPhx: manifest-prod-phx.yml
