@@ -1,3 +1,29 @@
+vars:
+
+  nonProd:
+    dev1-east1: vars-dev1-east1.yml
+    dev1-east2: vars-dev1-east2.yml
+    dev-west: vars-dev-west.yml
+
+    # include prod here also
+    ProdDal: vars-prod-dal.yml
+    ProdPhx: vars-prod-phx.yml
+
+  prod:
+    QAEast: vars-qa-east.yml
+    QAWest: vars-qa-west.yml
+    QA1East1: vars-qal-east1.yml
+    QA1East2: vars-qal-east2.yml
+
+    UATEast: vars-uat-east.yml
+    UATWest: vars-uat-west.yml
+    UAT1East1: vars-uat1-east1.yml
+    UAT1East2: vars-uat1-east2.yml
+
+    # include prod here also
+    ProdDal: vars-prod-dal.yml
+    ProdPhx: vars-prod-phx.yml
+
 manifest:
 
   nonProd:
