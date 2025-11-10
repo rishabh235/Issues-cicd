@@ -1,87 +1,62 @@
-def call(def pcfFoundation = null, def fileType = 'manifest') {
+stage('udeploy: import-artifact') {
+    logStage('udeploy-import-artifact') {
 
-    def yamlText = libraryResource('pipeline-global-config/foundation-manifests.yml')
-    def foundationData = readYaml(text: yamlText)
+        def fileType = 'manifest'
+        def manifestList = getFoundationManifests(pcfFoundation, fileType)
 
-    def section = foundationData[fileType]
-    if (!section) {
-        println "Section '${fileType}' not found. Returning empty."
-        return [:]   // Always safe
-    }
+        // Dev expects only ONE manifest file
+        def pcfManifestFile = manifestList[0]
 
-    // 1️⃣ QA PIPELINE (no foundation passed)
-    if (!pcfFoundation) {
-        // Merge all sub-maps inside prod section only
-        if (!section.prod) {
-            println "No prod section found. Returning empty."
-            return [:]
-        }
-
-        println "Loaded ${section.prod.size()} ${fileType} files for QA pipeline"
-        return section.prod   // <-- Map of key → filename
-    }
-
-    // 2️⃣ DEV PIPELINE (foundation provided)
-    def files = []
-
-    section.each { groupName, groupMap ->
-        if (groupMap instanceof Map && groupMap.containsKey(pcfFoundation)) {
-            def item = groupMap[pcfFoundation]
-            files = (item instanceof String) ? [item] : item
-        }
-    }
-
-    if (!files || files.isEmpty()) {
-        println "No mapping found for foundation '${pcfFoundation}' under '${fileType}'"
-        return []
-    }
-
-    println "Resolved ${fileType} file(s) for ${pcfFoundation}: ${files.join(',')}"
-    return files   // List<String>
-}
-=========================
-
-
-stage('validate: manifest') {
-    logStage('validate-manifest') {
-
-        def manifestList = getFoundationManifests(pcfFoundation, 'manifest')
-
-        if (!manifestList || manifestList.isEmpty()) {
-            buildFailed("No manifest files resolved for foundation: ${pcfFoundation}")
-        }
-
-        manifestList.each { manifestFile ->
-            if (!fileExists(manifestFile)) {
-                buildFailed("Manifest file not found: ${manifestFile}")
-            }
-
-            def indexType = (manifestFile.contains('prod-dal') || manifestFile.contains('prod-phx')) 
-                            ? 'np' : 'prod'
-
-            validateSplunkIndex(manifestFile, indexType)
-        }
+        uDeployDevVersionImport(gitRepositoryName, appVersion, pcfManifestFile, pcfRoute)
     }
 }
 
 
+===========================
 
-=================================
 
-stage('validate: manifest') {
-    logStage("validate-manifest") {
+stage('udeploy: import-artifact') {
+    logStage('udeploy-import-artifact') {
 
-        def manifestMap = getFoundationManifests(null, 'manifest')  // returns Map
+        def fileType = 'manifest'
+        def manifestMap = getFoundationManifests(null, fileType)
 
-        manifestMap.each { suffix, pcfManifest ->
+        // Expected suffixes for QA pipeline
+        def expectedSuffixes = [
+            'QAEast', 'QAWest', 
+            'QA1East1', 'QA1East2',
+            'UATEast', 'UATWest', 
+            'UAT1East1', 'UAT1East2',
+            'ProdDal', 'ProdPhx'
+        ]
 
-            def envType = (suffix == 'ProdDal' || suffix == 'ProdPhx') ? 'np' : 'prod'
-
-            if (fileExists(pcfManifest)) {
-                validateSplunkIndex(pcfManifest, envType)
-            } else {
-                buildFailed("No manifest file found: ${pcfManifest}")
-            }
+        // Dynamically create variables for each manifest file
+        expectedSuffixes.each { suffix ->
+            def varName = "pcfManifestFile${suffix}"
+            def value = manifestMap.containsKey(suffix) ? manifestMap[suffix] : ""
+            this."${varName}" = value
         }
+
+        // Pass everything to import function
+        uDeployProdVersionImportAWS(
+            gitProjectKey,
+            gitRepositoryName,
+            appVersion,
+
+            pcfManifestFileQAEast,
+            pcfManifestFileQAWest,
+
+            pcfManifestFileQA1East1,
+            pcfManifestFileQA1East2,
+
+            pcfManifestFileUATEast,
+            pcfManifestFileUATWest,
+
+            pcfManifestFileUAT1East1,
+            pcfManifestFileUAT1East2,
+
+            pcfManifestFileProdDal,
+            pcfManifestFileProdPhx
+        )
     }
 }
