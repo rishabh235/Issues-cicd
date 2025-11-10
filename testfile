@@ -1,82 +1,128 @@
-def call(String fileType = 'manifest') {
+manifest:
 
-    def yamlText = libraryResource('pipeline-global-config/foundation-manifest-prod.yml')
+  nonProd:
+    dev1-east1: manifest-dev1-east1.yml
+    dev1-east2: manifest-dev1-east2.yml
+    dev-west: manifest-dev-west.yml
+
+    # include prod here also
+    ProdDal: manifest-prod-dal.yml
+    ProdPhx: manifest-prod-phx.yml
+
+  prod:
+    QAEast: manifest-qa-east.yml
+    QAWest: manifest-qa-west.yml
+    QA1East1: manifest-qal-east1.yml
+    QA1East2: manifest-qal-east2.yml
+
+    UATEast: manifest-uat-east.yml
+    UATWest: manifest-uat-west.yml
+    UAT1East1: manifest-uat1-east1.yml
+    UAT1East2: manifest-uat1-east2.yml
+
+    # include prod here also
+    ProdDal: manifest-prod-dal.yml
+    ProdPhx: manifest-prod-phx.yml
+
+===============================
+
+def call(def pcfFoundation = null, def fileType = 'manifest') {
+
+    def yamlText = libraryResource('pipeline-global-config/foundation-manifests.yml')
     def foundationData = readYaml(text: yamlText)
 
+    // If section doesn't exist → return empty
     def section = foundationData[fileType]
     if (!section) {
-        buildFailed("Section '${fileType}' not found in foundation-manifest-prod.yml")
+        return []
     }
 
-    println "Loaded ${section.size()} entries for '${fileType}'"
-    return section
-}
-
-
-stage('validate: manifest') {
-    logStage("validate-manifest") {
-
-        def fileType = 'manifest'    // or "vars" based on pipeline
-        def manifestMap = getManifestsMap(fileType)
-
-        manifestMap.each { suffix, pcfManifest ->
-
-            println "Validating ${suffix} => ${pcfManifest}"
-
-            def envType = (suffix == 'ProdDal' || suffix == 'ProdPhx') ? 'np' : 'prod'
-
-            if (fileExists(pcfManifest)) {
-                println "Validating with splunk indextype: ${envType}"
-                validateSplunkIndex(pcfManifest, envType)
-            } else {
-                buildFailed("No manifest file found: ${pcfManifest}")
+    // ✅ CASE 1: QA PIPELINE → pcfFoundation not provided
+    // Return ALL files from both groups
+    if (!pcfFoundation) {
+        def allValues = []
+        section.each { groupName, groupMap ->
+            if (groupMap instanceof Map) {
+                allValues.addAll(groupMap.values())
             }
         }
+        println "Loaded ${allValues.size()} ${fileType} files for QA pipeline"
+        return allValues
+    }
+
+    // ✅ CASE 2: DEV PIPELINE → pcfFoundation provided
+    // Must search inside nested groups (nonProd + prod)
+    def files = []
+
+    section.each { groupName, groupMap ->
+        if (groupMap instanceof Map && groupMap.containsKey(pcfFoundation)) {
+            def item = groupMap[pcfFoundation]
+            files = (item instanceof String) ? [item] : item
+        }
+    }
+
+    // ✅ If nothing found → return empty list
+    if (!files) {
+        println "No mapping found for foundation '${pcfFoundation}' under '${fileType}'"
+        return []
+    }
+
+    println "Resolved ${fileType} file(s) for ${pcfFoundation}: ${files.join(",")}"
+    return files
+}
+
+===========================================
+
+stage('validate: manifest') {
+    logStage('validate-manifest')
+
+    // Always fetching manifest files for the pcfFoundation passed from Jenkins parameter
+    def manifestList = getFoundationManifests(pcfFoundation, 'manifest')
+
+    if (!manifestList || manifestList.isEmpty()) {
+        buildFailed("No manifest files resolved for foundation: ${pcfFoundation}")
+    }
+
+    manifestList.each { manifestFile ->
+
+        println "Validating manifest: ${manifestFile}"
+
+        if (!fileExists(manifestFile)) {
+            buildFailed("Manifest file not found: ${manifestFile}")
+        }
+
+        // ✅ Special logic: ProdDal & ProdPhx must use 'np'
+        def indexType =
+            (manifestFile.contains('prod-dal') || manifestFile.contains('prod-phx')) ?
+                'np' :
+                'prod'
+
+        println "Validating Splunk index type: ${indexType}"
+
+        validateSplunkIndex(manifestFile, indexType)
     }
 }
+
+===============================
 
 
 stage('udeploy: import-artifact') {
-    logStage('udeploy-import-artifact') {
+    logStage('udeploy-import-artifact')
 
-        def fileType = 'manifest'   // or 'vars'
+    def fileType = 'manifest'
 
-        def manifestMap = getManifestsMap(fileType)
+    // This will always return a list because your getFoundationManifests() enforces that
+    def manifestList = getFoundationManifests(pcfFoundation, fileType)
 
-        // These suffixes MUST match the parameter order of your existing uDeploy function
-        def expectedSuffixes = [
-            'QAEast', 'QAWest',
-            'QA1East1', 'QA1East2',
-            'UATEast', 'UATWest',
-            'UAT1East1', 'UAT1East2',
-            'ProdDal', 'ProdPhx'
-        ]
+    // Since validation already happened, this is safe:
+    def pcfManifestFile = manifestList[0]
 
-        expectedSuffixes.each { suffix ->
-            def varName = "pcfManifestFile${suffix}"
-            def value = manifestMap.containsKey(suffix) ? manifestMap[suffix] : ''
-            this."${varName}" = value
-            println "Set ${varName} = ${value}"
-        }
+    println "Using manifest file for ${pcfFoundation}: ${pcfManifestFile}"
 
-        uDeployProdVersionImportAWS(
-            gitProjectKey,
-            gitRepositoryName,
-            appVersion,
-            pcfManifestFileQAEast,
-            pcfManifestFileQAWest,
-            pcfManifestFileQA1East1,
-            pcfManifestFileQA1East2,
-            pcfManifestFileUATEast,
-            pcfManifestFileUATWest,
-            pcfManifestFileUAT1East1,
-            pcfManifestFileUAT1East2,
-            pcfManifestFileProdDal,
-            pcfManifestFileProdPhx
-        )
-    }
+    uDeployDevVersionImport(
+        gitRepositoryName,
+        appVersion,
+        pcfManifestFile,
+        pcfRoute
+    )
 }
-
-
-
-
