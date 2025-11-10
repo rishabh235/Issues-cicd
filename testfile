@@ -1,223 +1,76 @@
-vars:
-
-  nonProd:
-    dev1-east1: vars-dev1-east1.yml
-    dev1-east2: vars-dev1-east2.yml
-    dev-west: vars-dev-west.yml
-
-    # include prod here also
-    ProdDal: vars-prod-dal.yml
-    ProdPhx: vars-prod-phx.yml
-
-  prod:
-    QAEast: vars-qa-east.yml
-    QAWest: vars-qa-west.yml
-    QA1East1: vars-qal-east1.yml
-    QA1East2: vars-qal-east2.yml
-
-    UATEast: vars-uat-east.yml
-    UATWest: vars-uat-west.yml
-    UAT1East1: vars-uat1-east1.yml
-    UAT1East2: vars-uat1-east2.yml
-
-    # include prod here also
-    ProdDal: vars-prod-dal.yml
-    ProdPhx: vars-prod-phx.yml
-
-manifest:
-
-  nonProd:
-    dev1-east1: manifest-dev1-east1.yml
-    dev1-east2: manifest-dev1-east2.yml
-    dev-west: manifest-dev-west.yml
-
-    # include prod here also
-    ProdDal: manifest-prod-dal.yml
-    ProdPhx: manifest-prod-phx.yml
-
-  prod:
-    QAEast: manifest-qa-east.yml
-    QAWest: manifest-qa-west.yml
-    QA1East1: manifest-qal-east1.yml
-    QA1East2: manifest-qal-east2.yml
-
-    UATEast: manifest-uat-east.yml
-    UATWest: manifest-uat-west.yml
-    UAT1East1: manifest-uat1-east1.yml
-    UAT1East2: manifest-uat1-east2.yml
-
-    # include prod here also
-    ProdDal: manifest-prod-dal.yml
-    ProdPhx: manifest-prod-phx.yml
-
-===============================
-
-def call(def pcfFoundation = null, def fileType = 'manifest') {
+def call(def fileType = "manifest", def pcfFoundation = null) {
 
     def yamlText = libraryResource('pipeline-global-config/foundation-manifests.yml')
     def foundationData = readYaml(text: yamlText)
 
-    // If section doesn't exist → return empty
-    def section = foundationData[fileType]
-    if (!section) {
+    def typeSection = foundationData[fileType]
+    if (!typeSection) {
+        println "Section '${fileType}' not found. Returning empty."
         return []
     }
 
-    // ✅ CASE 1: QA PIPELINE → pcfFoundation not provided
-    // Return ALL files from both groups
-    if (!pcfFoundation) {
-        def allValues = []
-        section.each { groupName, groupMap ->
-            if (groupMap instanceof Map) {
-                allValues.addAll(groupMap.values())
-            }
-        }
-        println "Loaded ${allValues.size()} ${fileType} files for QA pipeline"
-        return allValues
-    }
+    // ============================
+    // ✅ DEV PIPELINE MODE
+    // ============================
+    // pcfFoundation passed → return only its entries
+    if (pcfFoundation) {
 
-    // ✅ CASE 2: DEV PIPELINE → pcfFoundation provided
-    // Must search inside nested groups (nonProd + prod)
-    def files = []
+        def foundationKey = pcfFoundation.toString().toLowerCase()
 
-    section.each { groupName, groupMap ->
-        if (groupMap instanceof Map && groupMap.containsKey(pcfFoundation)) {
-            def item = groupMap[pcfFoundation]
-            files = (item instanceof String) ? [item] : item
-        }
-    }
+        // Only DEV keys live under nonProd
+        def nonProdMap = typeSection["nonProd"] ?: [:]
 
-    // ✅ If nothing found → return empty list
-    if (!files) {
-        println "No mapping found for foundation '${pcfFoundation}' under '${fileType}'"
-        return []
-    }
-
-    println "Resolved ${fileType} file(s) for ${pcfFoundation}: ${files.join(",")}"
-    return files
-}
-
-===========================================
-
-stage('validate: manifest') {
-    logStage('validate-manifest')
-
-    // Always fetching manifest files for the pcfFoundation passed from Jenkins parameter
-    def manifestList = getFoundationManifests(pcfFoundation, 'manifest')
-
-    if (!manifestList || manifestList.isEmpty()) {
-        buildFailed("No manifest files resolved for foundation: ${pcfFoundation}")
-    }
-
-    manifestList.each { manifestFile ->
-
-        println "Validating manifest: ${manifestFile}"
-
-        if (!fileExists(manifestFile)) {
-            buildFailed("Manifest file not found: ${manifestFile}")
+        // Lookup case-insensitive match
+        def match = nonProdMap.find { k, v ->
+            k.toLowerCase() == foundationKey
         }
 
-        // ✅ Special logic: ProdDal & ProdPhx must use 'np'
-        def indexType =
-            (manifestFile.contains('prod-dal') || manifestFile.contains('prod-phx')) ?
-                'np' :
-                'prod'
-
-        println "Validating Splunk index type: ${indexType}"
-
-        validateSplunkIndex(manifestFile, indexType)
-    }
-}
-
-===============================
-
-
-stage('udeploy: import-artifact') {
-    logStage('udeploy-import-artifact')
-
-    def fileType = 'manifest'
-
-    // This will always return a list because your getFoundationManifests() enforces that
-    def manifestList = getFoundationManifests(pcfFoundation, fileType)
-
-    // Since validation already happened, this is safe:
-    def pcfManifestFile = manifestList[0]
-
-    println "Using manifest file for ${pcfFoundation}: ${pcfManifestFile}"
-
-    uDeployDevVersionImport(
-        gitRepositoryName,
-        appVersion,
-        pcfManifestFile,
-        pcfRoute
-    )
-}
-
-=======================================
-
-
-stage('validate: manifest') {
-    logStage("validate-manifest")
-
-    def fileType = 'manifest'     // or 'vars' depending on QA pipeline type
-    def manifestMap = getFoundationManifests(fileType)   // returns map for entire env
-
-    manifestMap.each { suffix, pcfManifest ->
-
-        // Special rule: ProdDal & ProdPhx → use NP splunk validation
-        def envType = (suffix == 'ProdDal' || suffix == 'ProdPhx') ? 'np' : 'prod'
-
-        println "Validating ${suffix} => ${pcfManifest} with splunk index type ${envType}"
-
-        if (fileExists(pcfManifest)) {
-            validateSplunkIndex(pcfManifest, envType)
-        } else {
-            buildFailed("No manifest file found: ${pcfManifest}")
+        if (!match) {
+            println "No mapping found for foundation '${pcfFoundation}'. Returning empty."
+            return []
         }
+
+        def value = match.value
+
+        // Always return list for consistency
+        return (value instanceof String) ? [value] : value
     }
+
+    // ============================
+    // ✅ QA PIPELINE MODE
+    // ============================
+    // No foundation passed → return ALL filenames
+    def nonProdMap = typeSection["nonProd"] ?: [:]
+    def prodMap    = typeSection["prod"]    ?: [:]
+
+    // Only values that are actual filenames (Strings)
+    def allFiles = (nonProdMap.values() + prodMap.values())
+                      .findAll { it instanceof String }
+
+    println "Flattened ${allFiles.size()} ${fileType} files for QA pipeline"
+
+    return allFiles
 }
 
 
-=====================================
 
-stage('udeploy: import-artifact') {
-    logStage('udeploy-import-artifact')
+==================
 
-    def fileType = 'manifest'
-    def manifestMap = getFoundationManifests(fileType)
+def manifestList = getFoundationManifests("manifest", null)
 
-    // Expected order required by your import function
-    def expectedSuffixes = [
-        'QAEast', 'QAWest',
-        'QA1East1', 'QA1East2',
-        'UATEast', 'UATWest',
-        'UAT1East1', 'UAT1East2',
-        'ProdDal', 'ProdPhx'
-    ]
+manifestList.each { manifestFile ->
 
-    // Create variables dynamically (pcfManifestFileXYZ)
-    expectedSuffixes.each { suffix ->
-        def varName = "pcfManifestFile${suffix}"
-        def value = manifestMap.containsKey(suffix) ? manifestMap[suffix] : ''
-        this."${varName}" = value
-        println "Set ${varName} = ${value}"
+    if (!manifestFile?.trim()) {
+        echo "Skipping empty manifest entry..."
+        return
     }
 
-    // Call existing uDeploy function, unchanged
-    uDeployProdVersionImportAWS(
-        gitProjectKey,
-        gitRepositoryName,
-        appVersion,
-        pcfManifestFileQAEast,
-        pcfManifestFileQAWest,
-        pcfManifestFileQA1East1,
-        pcfManifestFileQA1East2,
-        pcfManifestFileUATEast,
-        pcfManifestFileUATWest,
-        pcfManifestFileUAT1East1,
-        pcfManifestFileUAT1East2,
-        pcfManifestFileProdDal,
-        pcfManifestFileProdPhx
-    )
-}
+    def envType = (manifestFile.contains("prod-dal") 
+                   || manifestFile.contains("prod-phx")) ? "np" : "prod"
 
+    if (fileExists(manifestFile)) {
+        validateSplunkIndex(manifestFile, envType)
+    } else {
+        echo "Manifest file not found: ${manifestFile}, skipping..."
+    }
+}
