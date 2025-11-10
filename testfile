@@ -152,3 +152,72 @@ stage('udeploy: import-artifact') {
         pcfRoute
     )
 }
+
+=======================================
+
+
+stage('validate: manifest') {
+    logStage("validate-manifest")
+
+    def fileType = 'manifest'     // or 'vars' depending on QA pipeline type
+    def manifestMap = getFoundationManifests(fileType)   // returns map for entire env
+
+    manifestMap.each { suffix, pcfManifest ->
+
+        // Special rule: ProdDal & ProdPhx → use NP splunk validation
+        def envType = (suffix == 'ProdDal' || suffix == 'ProdPhx') ? 'np' : 'prod'
+
+        println "Validating ${suffix} => ${pcfManifest} with splunk index type ${envType}"
+
+        if (fileExists(pcfManifest)) {
+            validateSplunkIndex(pcfManifest, envType)
+        } else {
+            buildFailed("No manifest file found: ${pcfManifest}")
+        }
+    }
+}
+
+
+=====================================
+
+stage('udeploy: import-artifact') {
+    logStage('udeploy-import-artifact')
+
+    def fileType = 'manifest'
+    def manifestMap = getFoundationManifests(fileType)
+
+    // Expected order required by your import function
+    def expectedSuffixes = [
+        'QAEast', 'QAWest',
+        'QA1East1', 'QA1East2',
+        'UATEast', 'UATWest',
+        'UAT1East1', 'UAT1East2',
+        'ProdDal', 'ProdPhx'
+    ]
+
+    // Create variables dynamically (pcfManifestFileXYZ)
+    expectedSuffixes.each { suffix ->
+        def varName = "pcfManifestFile${suffix}"
+        def value = manifestMap.containsKey(suffix) ? manifestMap[suffix] : ''
+        this."${varName}" = value
+        println "Set ${varName} = ${value}"
+    }
+
+    // Call existing uDeploy function, unchanged
+    uDeployProdVersionImportAWS(
+        gitProjectKey,
+        gitRepositoryName,
+        appVersion,
+        pcfManifestFileQAEast,
+        pcfManifestFileQAWest,
+        pcfManifestFileQA1East1,
+        pcfManifestFileQA1East2,
+        pcfManifestFileUATEast,
+        pcfManifestFileUATWest,
+        pcfManifestFileUAT1East1,
+        pcfManifestFileUAT1East2,
+        pcfManifestFileProdDal,
+        pcfManifestFileProdPhx
+    )
+}
+
