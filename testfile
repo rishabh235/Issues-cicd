@@ -1,76 +1,87 @@
-def call(def fileType = "manifest", def pcfFoundation = null) {
+def call(def pcfFoundation = null, def fileType = 'manifest') {
 
     def yamlText = libraryResource('pipeline-global-config/foundation-manifests.yml')
     def foundationData = readYaml(text: yamlText)
 
-    def typeSection = foundationData[fileType]
-    if (!typeSection) {
+    def section = foundationData[fileType]
+    if (!section) {
         println "Section '${fileType}' not found. Returning empty."
+        return [:]   // Always safe
+    }
+
+    // 1️⃣ QA PIPELINE (no foundation passed)
+    if (!pcfFoundation) {
+        // Merge all sub-maps inside prod section only
+        if (!section.prod) {
+            println "No prod section found. Returning empty."
+            return [:]
+        }
+
+        println "Loaded ${section.prod.size()} ${fileType} files for QA pipeline"
+        return section.prod   // <-- Map of key → filename
+    }
+
+    // 2️⃣ DEV PIPELINE (foundation provided)
+    def files = []
+
+    section.each { groupName, groupMap ->
+        if (groupMap instanceof Map && groupMap.containsKey(pcfFoundation)) {
+            def item = groupMap[pcfFoundation]
+            files = (item instanceof String) ? [item] : item
+        }
+    }
+
+    if (!files || files.isEmpty()) {
+        println "No mapping found for foundation '${pcfFoundation}' under '${fileType}'"
         return []
     }
 
-    // ============================
-    // ✅ DEV PIPELINE MODE
-    // ============================
-    // pcfFoundation passed → return only its entries
-    if (pcfFoundation) {
+    println "Resolved ${fileType} file(s) for ${pcfFoundation}: ${files.join(',')}"
+    return files   // List<String>
+}
+=========================
 
-        def foundationKey = pcfFoundation.toString().toLowerCase()
 
-        // Only DEV keys live under nonProd
-        def nonProdMap = typeSection["nonProd"] ?: [:]
+stage('validate: manifest') {
+    logStage('validate-manifest') {
 
-        // Lookup case-insensitive match
-        def match = nonProdMap.find { k, v ->
-            k.toLowerCase() == foundationKey
+        def manifestList = getFoundationManifests(pcfFoundation, 'manifest')
+
+        if (!manifestList || manifestList.isEmpty()) {
+            buildFailed("No manifest files resolved for foundation: ${pcfFoundation}")
         }
 
-        if (!match) {
-            println "No mapping found for foundation '${pcfFoundation}'. Returning empty."
-            return []
+        manifestList.each { manifestFile ->
+            if (!fileExists(manifestFile)) {
+                buildFailed("Manifest file not found: ${manifestFile}")
+            }
+
+            def indexType = (manifestFile.contains('prod-dal') || manifestFile.contains('prod-phx')) 
+                            ? 'np' : 'prod'
+
+            validateSplunkIndex(manifestFile, indexType)
         }
-
-        def value = match.value
-
-        // Always return list for consistency
-        return (value instanceof String) ? [value] : value
     }
-
-    // ============================
-    // ✅ QA PIPELINE MODE
-    // ============================
-    // No foundation passed → return ALL filenames
-    def nonProdMap = typeSection["nonProd"] ?: [:]
-    def prodMap    = typeSection["prod"]    ?: [:]
-
-    // Only values that are actual filenames (Strings)
-    def allFiles = (nonProdMap.values() + prodMap.values())
-                      .findAll { it instanceof String }
-
-    println "Flattened ${allFiles.size()} ${fileType} files for QA pipeline"
-
-    return allFiles
 }
 
 
 
-==================
+=================================
 
-def manifestList = getFoundationManifests("manifest", null)
+stage('validate: manifest') {
+    logStage("validate-manifest") {
 
-manifestList.each { manifestFile ->
+        def manifestMap = getFoundationManifests(null, 'manifest')  // returns Map
 
-    if (!manifestFile?.trim()) {
-        echo "Skipping empty manifest entry..."
-        return
-    }
+        manifestMap.each { suffix, pcfManifest ->
 
-    def envType = (manifestFile.contains("prod-dal") 
-                   || manifestFile.contains("prod-phx")) ? "np" : "prod"
+            def envType = (suffix == 'ProdDal' || suffix == 'ProdPhx') ? 'np' : 'prod'
 
-    if (fileExists(manifestFile)) {
-        validateSplunkIndex(manifestFile, envType)
-    } else {
-        echo "Manifest file not found: ${manifestFile}, skipping..."
+            if (fileExists(pcfManifest)) {
+                validateSplunkIndex(pcfManifest, envType)
+            } else {
+                buildFailed("No manifest file found: ${pcfManifest}")
+            }
+        }
     }
 }
