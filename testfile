@@ -1,62 +1,91 @@
-stage('udeploy: import-artifact') {
-    logStage('udeploy-import-artifact') {
+// vars/getFoundationManifests.groovy
+def call(def pcfFoundation = null, def fileType = 'manifest') {
 
-        def fileType = 'manifest'
-        def manifestList = getFoundationManifests(pcfFoundation, fileType)
+    def yamlText = libraryResource('pipeline-global-config/foundation-manifests.yml')
+    def foundationData = readYaml(text: yamlText)
 
-        // Dev expects only ONE manifest file
-        def pcfManifestFile = manifestList[0]
-
-        uDeployDevVersionImport(gitRepositoryName, appVersion, pcfManifestFile, pcfRoute)
+    def section = foundationData[fileType]
+    if (!section) {
+        println "Section '${fileType}' not found. Returning empty list."
+        return []
     }
+
+    // ---------------------------
+    // QA mode -> no pcfFoundation: return all entries from np + prod
+    // ---------------------------
+    if (!pcfFoundation) {
+        def result = []
+
+        // collect np entries as indexType = 'np'
+        if (section.np instanceof Map) {
+            section.np.each { k, v ->
+                if (v) result << [ key: k, file: v, indexType: 'np' ]
+            }
+        }
+
+        // collect prod entries as indexType = 'prod'
+        if (section.prod instanceof Map) {
+            section.prod.each { k, v ->
+                if (v) result << [ key: k, file: v, indexType: 'prod' ]
+            }
+        }
+
+        println "Loaded ${result.size()} ${fileType} entries for QA pipeline (np + prod)."
+        return result
+    }
+
+    // ---------------------------
+    // DEV mode -> pcfFoundation provided: find the entry in np or prod
+    // ---------------------------
+    def found = []
+    section.each { groupName, groupMap ->
+        if (groupMap instanceof Map && groupMap.containsKey(pcfFoundation)) {
+            def file = groupMap[pcfFoundation]
+            if (file) {
+                def idx = (groupName == 'prod') ? 'prod' : 'np'
+                found << [ key: pcfFoundation, file: file, indexType: idx ]
+            }
+        }
+    }
+
+    if (!found) {
+        println "No mapping found for foundation '${pcfFoundation}' under '${fileType}'. Returning empty list."
+        return []
+    }
+
+    println "Resolved ${fileType} for ${pcfFoundation}: ${found*.file.join(',')} (indexType=${found*.indexType.join(',')})"
+    return found
 }
 
 
-===========================
 
 
-stage('udeploy: import-artifact') {
-    logStage('udeploy-import-artifact') {
 
-        def fileType = 'manifest'
-        def manifestMap = getFoundationManifests(null, fileType)
 
-        // Expected suffixes for QA pipeline
-        def expectedSuffixes = [
-            'QAEast', 'QAWest', 
-            'QA1East1', 'QA1East2',
-            'UATEast', 'UATWest', 
-            'UAT1East1', 'UAT1East2',
-            'ProdDal', 'ProdPhx'
-        ]
 
-        // Dynamically create variables for each manifest file
-        expectedSuffixes.each { suffix ->
-            def varName = "pcfManifestFile${suffix}"
-            def value = manifestMap.containsKey(suffix) ? manifestMap[suffix] : ""
-            this."${varName}" = value
+
+
+
+
+stage('validate: manifest') {
+    logStage('validate-manifest')
+
+    def manifestList = getFoundationManifests(pcfFoundation, 'manifest')
+
+    if (!manifestList || manifestList.isEmpty()) {
+        buildFailed("No manifest files resolved for foundation: ${pcfFoundation}")
+    }
+
+    manifestList.each { item ->
+        def manifestFile = item.file
+        def indexType = item.indexType
+
+        println "Validating ${manifestFile} with index type ${indexType}"
+
+        if (!fileExists(manifestFile)) {
+            buildFailed("Manifest file not found: ${manifestFile}. Action Required: Please add manifest file in the app source code")
         }
 
-        // Pass everything to import function
-        uDeployProdVersionImportAWS(
-            gitProjectKey,
-            gitRepositoryName,
-            appVersion,
-
-            pcfManifestFileQAEast,
-            pcfManifestFileQAWest,
-
-            pcfManifestFileQA1East1,
-            pcfManifestFileQA1East2,
-
-            pcfManifestFileUATEast,
-            pcfManifestFileUATWest,
-
-            pcfManifestFileUAT1East1,
-            pcfManifestFileUAT1East2,
-
-            pcfManifestFileProdDal,
-            pcfManifestFileProdPhx
-        )
+        validateSplunkIndex(manifestFile, indexType)
     }
 }
