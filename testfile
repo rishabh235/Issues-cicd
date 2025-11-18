@@ -2,54 +2,53 @@ def call(def manifestFileName, def indexType) {
 
     def data = readYaml file: manifestFileName
 
-    // ------------------------------
-    // Case 1: env.SPLUNK_INDEX exists
-    // ------------------------------
+    // ---------------------------------------------------
+    // CASE 1: env.SPLUNK_INDEX
+    // ---------------------------------------------------
     if (data?.env?.SPLUNK_INDEX) {
 
-        def splunkIndex = data.env.SPLUNK_INDEX.toLowerCase()
+        def splIndex = data.env.SPLUNK_INDEX.toLowerCase()
 
-        // CORRECT LOGIC: FAIL only if NOT matching
-        if (!splunkIndex.contains(indexType.toLowerCase())) {
-            buildFailed("The manifest file '${manifestFileName}' contains disallowed Splunk index '${splunkIndex}'.\n" +
-                        "Action Required: Please update the Splunk index to contain '${indexType}'.")
+        // CORRECT LOGIC: fail only if NOT matching
+        if (!splIndex.contains(indexType.toLowerCase())) {
+            buildFailed("The manifest file '${manifestFileName}' contains disallowed Splunk index '${splIndex}'.\n" +
+                        "Action Required: Please update the Splunk index to contain '${indexType}'")
         }
 
-        return
     }
 
-    // ---------------------------------------
-    // Case 2: applications.env.SPLUNK_INDEX[]
-    // ---------------------------------------
-    if (data?.applications?.env?.SPLUNK_INDEX) {
+    // ---------------------------------------------------
+    // CASE 2: applications.env.SPLUNK_INDEX[0]
+    // ---------------------------------------------------
+    else if (data?.applications?.env?.SPLUNK_INDEX) {
 
-        def splunkIndex = data.applications.env.SPLUNK_INDEX[0].toLowerCase()
+        def splIndex = data.applications.env.SPLUNK_INDEX[0].toLowerCase()
 
-        if (!splunkIndex.contains(indexType.toLowerCase())) {
-            buildFailed("The manifest file '${manifestFileName}' contains disallowed Splunk index '${splunkIndex}'.\n" +
-                        "Action Required: Please update the Splunk index to contain '${indexType}'.")
+        if (!splIndex.contains(indexType.toLowerCase())) {
+            buildFailed("The manifest file '${manifestFileName}' contains disallowed Splunk index '${splIndex}'.\n" +
+                        "Action Required: Please update the Splunk index to contain '${indexType}'")
         }
 
-        return
     }
 
-    // ------------------------------
-    // Case 3: splunk-index (root key)
-    // ------------------------------
-    if (data?."splunk-index") {
+    // ---------------------------------------------------
+    // CASE 3: "splunk-index"
+    // ---------------------------------------------------
+    else if (data?."splunk-index") {
 
-        def splunkIndex = data."splunk-index".toLowerCase()
+        def splIndex = data."splunk-index".toLowerCase()
 
-        if (!splunkIndex.contains(indexType.toLowerCase())) {
-            buildFailed("The manifest file '${manifestFileName}' contains disallowed Splunk index '${splunkIndex}'.\n" +
-                        "Action Required: Please update the Splunk index to contain '${indexType}'.")
+        if (!splIndex.contains(indexType.toLowerCase())) {
+            buildFailed("The manifest file '${manifestFileName}' contains disallowed Splunk index '${splIndex}'.\n" +
+                        "Action Required: Please update the Splunk index to contain '${indexType}'")
         }
 
-        return
     }
 
-    // ------------------------------
-    // No SPLUNK index found
-    // ------------------------------
-    buildFailed("No SPLUNK_INDEX found in manifest file '${manifestFileName}'.")
+    // ---------------------------------------------------
+    // CASE 4: None found
+    // ---------------------------------------------------
+    else {
+        buildFailed("No SPLUNK_INDEX found in manifest file '${manifestFileName}'")
+    }
 }
