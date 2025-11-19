@@ -1,54 +1,49 @@
-def call(def manifestFileName, def indexType) {
+def call(def pcfFoundation = null, def fileType = 'manifest') {
 
-    def data = readYaml file: manifestFileName
+    def yamlText = libraryResource('pipeline-global-config/foundation-manifests.yml')
+    def foundationData = readYaml(text: yamlText)
 
-    // ---------------------------------------------------
-    // CASE 1: env.SPLUNK_INDEX
-    // ---------------------------------------------------
-    if (data?.env?.SPLUNK_INDEX) {
+    def section = foundationData[fileType]
+    if (!section) {
+        return []
+    }
 
-        def splIndex = data.env.SPLUNK_INDEX.toLowerCase()
+    // -----------------------------
+    // QA PIPELINE (no foundation)
+    // -----------------------------
+    if (!pcfFoundation) {
 
-        // CORRECT LOGIC: fail only if NOT matching
-        if (!splIndex.contains(indexType.toLowerCase())) {
-            buildFailed("The manifest file '${manifestFileName}' contains disallowed Splunk index '${splIndex}'.\n" +
-                        "Action Required: Please update the Splunk index to contain '${indexType}'")
+        def all = []
+
+        // np section
+        if (section.np instanceof Map) {
+            section.np.each { key, file ->
+                all << [ key: key, file: file, indexType: 'np' ]
+            }
         }
 
-    }
-
-    // ---------------------------------------------------
-    // CASE 2: applications.env.SPLUNK_INDEX[0]
-    // ---------------------------------------------------
-    else if (data?.applications?.env?.SPLUNK_INDEX) {
-
-        def splIndex = data.applications.env.SPLUNK_INDEX[0].toLowerCase()
-
-        if (!splIndex.contains(indexType.toLowerCase())) {
-            buildFailed("The manifest file '${manifestFileName}' contains disallowed Splunk index '${splIndex}'.\n" +
-                        "Action Required: Please update the Splunk index to contain '${indexType}'")
+        // prod section
+        if (section.prod instanceof Map) {
+            section.prod.each { key, file ->
+                all << [ key: key, file: file, indexType: 'prod' ]
+            }
         }
 
+        return all
     }
 
-    // ---------------------------------------------------
-    // CASE 3: "splunk-index"
-    // ---------------------------------------------------
-    else if (data?."splunk-index") {
+    // -----------------------------
+    // DEV PIPELINE (with foundation)
+    // -----------------------------
+    def result = []
 
-        def splIndex = data."splunk-index".toLowerCase()
-
-        if (!splIndex.contains(indexType.toLowerCase())) {
-            buildFailed("The manifest file '${manifestFileName}' contains disallowed Splunk index '${splIndex}'.\n" +
-                        "Action Required: Please update the Splunk index to contain '${indexType}'")
+    section.each { group, groupMap ->
+        if (groupMap instanceof Map && groupMap.containsKey(pcfFoundation)) {
+            def file = groupMap[pcfFoundation]
+            def idx = (group == 'prod') ? 'prod' : 'np'
+            result << [ key: pcfFoundation, file: file, indexType: idx ]
         }
-
     }
 
-    // ---------------------------------------------------
-    // CASE 4: None found
-    // ---------------------------------------------------
-    else {
-        buildFailed("No SPLUNK_INDEX found in manifest file '${manifestFileName}'")
-    }
+    return result
 }
