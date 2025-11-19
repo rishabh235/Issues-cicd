@@ -1,49 +1,122 @@
-def call(def pcfFoundation = null, def fileType = 'manifest') {
+stage('udeploy: import-artifact') {
+    logStage('udeploy-import-artifact') {
 
-    def yamlText = libraryResource('pipeline-global-config/foundation-manifests.yml')
-    def foundationData = readYaml(text: yamlText)
+        def fileType = 'manifest'
 
-    def section = foundationData[fileType]
-    if (!section) {
-        return []
+        // Get ALL manifests for QA
+        def manifestList = getFoundationManifests(null, fileType)
+
+        // Convert to a map: key → file
+        def manifestMap = manifestList.collectEntries { item ->
+            [(item.key): item.file]
+        }
+
+        // Pass the MAP directly to uDeploy
+        uDeployProdVersionImportAWS(
+            gitProjectKey,
+            gitRepositoryName,
+            appVersion,
+            manifestMap
+        )
+    }
+}
+
+
+
+=================
+
+def call(def gitProjectKey,
+         def gitRepositoryName,
+         def appVersion,
+         Map manifestMap) {
+
+    def envProperty = loadEnvironmentProperties()
+    def jdkVersion = envProperty.default_jdk
+    def uDeployUri = envProperty.udeploy_host_url
+    def uDeployCli = envProperty.udeploy_cli_path
+    def uDeployCredential = envProperty.udeploy_auth_credential_id
+    def uDeployApplicationName = envProperty.udeploy_app_name
+    def uDeployComponentName = "${uDeployApplicationName}${gitRepositoryName}"
+
+    // Determine build type (maven/gradle)
+    def uDeployArtifactName = ""
+    if (getAppBuildType() == "maven") {
+        uDeployArtifactName = findFiles(glob: "target/*.jar")[0].name
+        uDeployComponentPropUpdate(uDeployComponentName, "BuildType", "Maven")
+    } else if (getAppBuildType() == "gradle") {
+        uDeployArtifactName = findFiles(glob: "build/libs/*.jar")[0].name
+        uDeployComponentPropUpdate(uDeployComponentName, "BuildType", "Gradle")
+    } else {
+        buildFailed("Build type could not be detected. Must be maven or gradle.")
     }
 
-    // -----------------------------
-    // QA PIPELINE (no foundation)
-    // -----------------------------
-    if (!pcfFoundation) {
+    def uDeployComponentVersion = appVersion
 
-        def all = []
+    // ------------------------
+    // Create Version in uDeploy
+    // ------------------------
+    withEnv(["JAVA_HOME=${tool jdkVersion}", "PATH+JAVA=${tool jdkVersion}/bin"]) {
+        withCredentials([usernamePassword(credentialsId: uDeployCredential,
+                                          usernameVariable: 'USERNAME',
+                                          passwordVariable: 'PASSWORD')]) {
 
-        // np section
-        if (section.np instanceof Map) {
-            section.np.each { key, file ->
-                all << [ key: key, file: file, indexType: 'np' ]
+            // Create a new version
+            sh """
+                ${uDeployCli} \
+                --weburl ${uDeployUri} \
+                --username ${USERNAME} \
+                --password ${PASSWORD} \
+                createVersion \
+                --component ${uDeployComponentName} \
+                --version ${uDeployComponentVersion} \
+                --description "Pushed from Jenkins"
+            """
+
+            // Upload artifacts
+            sh """
+                ${uDeployCli} \
+                --weburl ${uDeployUri} \
+                --username ${USERNAME} \
+                --password ${PASSWORD} \
+                addVersionFiles \
+                --component ${uDeployComponentName} \
+                --version ${uDeployComponentVersion} \
+                --base . \
+                --include target/${uDeployArtifactName} \
+                --include build/libs/${uDeployArtifactName} \
+                --include **/*.yml
+            """
+
+            // ------------------------
+            // SET VERSION PROPERTIES
+            // ------------------------
+            def versionProperties = [
+                "Jenkins.server"     : env.JENKINS_URL,
+                "JobName"            : env.JOB_NAME.split("/").last(),
+                "appVersion"         : appVersion,
+                "artifact"           : uDeployArtifactName,
+                "repo"               : gitRepositoryName,
+            ]
+
+            // ➤ Add all manifest files dynamically
+            manifestMap.each { key, fileName ->
+                versionProperties["Manifest-${key}"] = fileName
+            }
+
+            // Write each property to uDeploy
+            versionProperties.each { key, value ->
+                sh """
+                    ${uDeployCli} \
+                    --weburl ${uDeployUri} \
+                    --username ${USERNAME} \
+                    --password ${PASSWORD} \
+                    setVersionProperty \
+                    --component ${uDeployComponentName} \
+                    --version ${uDeployComponentVersion} \
+                    --name "${key}" \
+                    --value "${value}"
+                """
             }
         }
-
-        // prod section
-        if (section.prod instanceof Map) {
-            section.prod.each { key, file ->
-                all << [ key: key, file: file, indexType: 'prod' ]
-            }
-        }
-
-        return all
     }
-
-    // -----------------------------
-    // DEV PIPELINE (with foundation)
-    // -----------------------------
-    def result = []
-
-    section.each { group, groupMap ->
-        if (groupMap instanceof Map && groupMap.containsKey(pcfFoundation)) {
-            def file = groupMap[pcfFoundation]
-            def idx = (group == 'prod') ? 'prod' : 'np'
-            result << [ key: pcfFoundation, file: file, indexType: idx ]
-        }
-    }
-
-    return result
 }
