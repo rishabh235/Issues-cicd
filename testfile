@@ -1,40 +1,130 @@
-// BuildManager.groovy
+// nexusArtifactoryUpload.groovy
+def call(def repositoryName, def repositoryId, def groupId, def artifactId, def appVersion) {
 
-def call(def appVersion, def gitRepositoryName) {
+    // load environment properties from your helper
+    def envProperty = loadEnvironmentProperties()
+    def mavenTool = envProperty.maven_upload_tool
+    def defaultJdk = envProperty.default_jdk
+    def nexusRepoBaseUrl = envProperty.nexus_repo_base_url
 
-    def appBuildType = getAppBuildType()
+    println "INFO: Nexus artifact uploading to repository: ${repositoryName}"
+    println "INFO: The app version uploading to Nexus repository: ${appVersion}"
 
-    if (appBuildType == 'maven') {
+    // snapshot guard
+    if (repositoryName?.toLowerCase()?.contains('snapshots') && !(appVersion?.toUpperCase()?.contains('SNAPSHOT'))) {
+        buildFailed("Attempting to upload a non-snapshot version to the Nexus snapshot repository. \nAction Required: Please ensure that only 'SNAPSHOT' versions are uploaded to the snapshot repository.")
+    }
 
-        println "INFO: Build type detected as Maven — starting Maven build."
-        buildMaven(appVersion)
+    // determine build type from helper available in pipeline
+    def buildType = getAppBuildType() ?: 'maven' // default to maven if not set
 
-    } else if (appBuildType == 'gradle') {
+    // Decide jar path and pomFile to use
+    def jarPath
+    def pomFileToUse = 'pom.xml' // default for maven
+    def generatedPom = false
 
-        println "INFO: Build type detected as Gradle — starting Gradle build."
-        buildGradle(appVersion, gitRepositoryName)
-
+    if (buildType == 'maven') {
+        // Maven: artifact is in target/
+        jarPath = "target/${artifactId}-${appVersion}.jar"
+        pomFileToUse = 'pom.xml'
+    } else if (buildType == 'gradle') {
+        // Gradle: most builds place jars under build/libs/
+        jarPath = "build/libs/${artifactId}-${appVersion}.jar"
+        // If that exact name doesn't exist, we will try to fallback checks below
+        // For Gradle we will generate a minimal pom and upload with that pom file
+        pomFileToUse = 'generated-pom.xml'
+        generatedPom = true
     } else {
+        buildFailed("Unsupported build type '${buildType}' in nexus upload. Cannot determine artifact path.")
+    }
 
-        println "ERROR: Invalid build type '${appBuildType}'. Cannot continue."
-        error("Unsupported build type '${appBuildType}'. Build failed.")
+    // Prepare environment for mvn
+    withEnv(["JAVA_HOME=${tool "${defaultJdk}"}", "PATH+MAVEN=${tool "${mavenTool}"}/bin:${tool "${defaultJdk}"}/bin"]) {
 
+        // Ensure the jar exists (for gradle we do a couple of fallbacks)
+        if (buildType == 'gradle') {
+            // Try the primary expected path
+            def exists = sh(script: "if [ -f \"${jarPath}\" ]; then echo ok; else echo missing; fi", returnStdout: true).trim()
+            if (exists == 'missing') {
+                // try more lenient match: pick the first jar in build/libs that contains artifactId OR version
+                def fallback = sh(script: "ls build/libs | grep -E \"${artifactId}|${appVersion}\" | head -n1 || true", returnStdout: true).trim()
+                if (fallback) {
+                    jarPath = "build/libs/${fallback}"
+                    println "INFO: fallback gradle jar resolved to ${jarPath}"
+                } else {
+                    buildFailed("Gradle artifact not found at expected path '${jarPath}'. Ensure Gradle produced the jar.")
+                }
+            } else {
+                println "INFO: Gradle jar found at ${jarPath}"
+            }
+
+            // Generate minimal pom using provided GAV so mvn can use it
+            def generatedPomContent = """<project xmlns="http://maven.apache.org/POM/4.0.0"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                          http://maven.apache.org/xsd/maven-4.0.0.xsd">
+      <modelVersion>4.0.0</modelVersion>
+      <groupId>${groupId}</groupId>
+      <artifactId>${artifactId}</artifactId>
+      <version>${appVersion}</version>
+      <packaging>jar</packaging>
+      <name>${artifactId}</name>
+    </project>"""
+            writeFile file: pomFileToUse, text: generatedPomContent
+            println "INFO: Generated temporary pom for Gradle upload: ${pomFileToUse}"
+        }
+
+        // For Maven builds: set the version using versions:set -> deploy -> versions:revert
+        if (buildType == 'maven') {
+            sh "mvn versions:set -q -DnewVersion=${appVersion}"
+        }
+
+        // build the mvn deploy:deploy-file command
+        def deployCmd = """mvn -V -B -e deploy:deploy-file \
+-DpomFile=${pomFileToUse} \
+-Durl=${nexusRepoBaseUrl}/${repositoryName}/ \
+-DrepositoryId=${repositoryId} \
+-DgroupId=${groupId} \
+-DartifactId=${artifactId} \
+-Dversion=${appVersion} \
+-Dpackaging=jar \
+-Dfile=${jarPath}"""
+
+        println "INFO: Running mvn deploy for ${artifactId} -> ${repositoryName}"
+        sh deployCmd
+
+        // revert versions change for maven
+        if (buildType == 'maven') {
+            sh "mvn versions:revert -q"
+        }
+
+        // cleanup generated pom if any
+        if (generatedPom && fileExists(pomFileToUse)) {
+            sh "rm -f ${pomFileToUse}"
+        }
+
+        println "INFO: Nexus upload finished for ${artifactId}-${appVersion}.jar"
     }
 }
 
 
 
 
-=======
-stage('build') {
-    logStage('build') {
 
-        buildProgress()
+≈======
 
-        // Determine version (same logic as before)
-        appVersion = determineAppVersion(getAppVersionMaven(), gitBranch)
 
-        // Call library to run Maven/Gradle/fail if invalid
-        BuildManager(appVersion, gitRepositoryName)
+stage('nexus: publish artifact') {
+    logStage('nexus-publish-artifact') {
+
+        def pom = readMavenPom file: 'pom.xml'
+
+        if (pom.packaging?.toString()?.contains('pom')) {
+            println "INFO: Packaging is 'pom' - uploading POM artifact to Nexus"
+            nexusArtifactoryPomUpload('snapshots', 'internalMavenSnapshotRepository', getAppGroupId(), getAppArtifactId(), appVersion)
+        } else {
+            println "INFO: Packaging is '${pom.packaging}' - uploading artifact to Nexus"
+            nexusArtifactoryUpload('snapshots', 'internalMavenSnapshotRepository', getAppGroupId(), getAppArtifactId(), appVersion)
+        }
     }
 }
