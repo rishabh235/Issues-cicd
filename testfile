@@ -117,14 +117,38 @@ def call(def repositoryName, def repositoryId, def groupId, def artifactId, def 
 stage('nexus: publish artifact') {
     logStage('nexus-publish-artifact') {
 
-        def pom = readMavenPom file: 'pom.xml'
+        def buildType = getAppBuildType()
 
-        if (pom.packaging?.toString()?.contains('pom')) {
-            println "INFO: Packaging is 'pom' - uploading POM artifact to Nexus"
-            nexusArtifactoryPomUpload('snapshots', 'internalMavenSnapshotRepository', getAppGroupId(), getAppArtifactId(), appVersion)
+        if (buildType == 'maven') {
+
+            // Maven flow
+            def pom = readMavenPom file: 'pom.xml'
+
+            if (pom.packaging.toString().contains('pom')) {
+                println "INFO: Uploading POM packaging to Nexus"
+                nexusArtifactoryPomUpload('snapshots', 'internalMavenSnapshotRepository',
+                    getAppGroupId(), getAppArtifactId(), appVersion)
+            } else {
+                println "INFO: Uploading JAR packaging to Nexus"
+                nexusArtifactoryUpload('snapshots', 'internalMavenSnapshotRepository',
+                    getAppGroupId(), getAppArtifactId(), appVersion)
+            }
+
+        } else if (buildType == 'gradle') {
+
+            // Gradle flow – no pom.xml reading
+            println "INFO: Gradle project detected — uploading Gradle JAR"
+
+            nexusArtifactoryUpload(
+                'snapshots',
+                'internalMavenSnapshotRepository',
+                getAppGroupId(),
+                getAppArtifactId(),
+                appVersion
+            )
+
         } else {
-            println "INFO: Packaging is '${pom.packaging}' - uploading artifact to Nexus"
-            nexusArtifactoryUpload('snapshots', 'internalMavenSnapshotRepository', getAppGroupId(), getAppArtifactId(), appVersion)
+            buildFailed("Unknown build type '${buildType}' for Nexus publish stage")
         }
     }
 }
