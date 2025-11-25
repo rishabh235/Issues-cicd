@@ -75,3 +75,40 @@ def call(def repositoryName, def repositoryId, def groupId, def artifactId, def 
         }
     }
 }
+
+
+
+
+
+stage('nexus: publish artifact') {
+    logStage('nexus-publish-artifact') {
+
+        // TRY TO LOAD pom.xml — return null if it doesn't exist (Gradle case)
+        def pom = fileExists('pom.xml') ? readMavenPom(file: 'pom.xml') : null
+
+        if (pom != null && pom.packaging.toString().contains('pom')) {
+            println "INFO: Uploading the ${pom.packaging.toString()} to Nexus artifact repo"
+            nexusArtifactoryPomUpload(
+                'snapshots',
+                'internalMavenSnapshotRepository',
+                getAppGroupId(),
+                getAppArtifactId(),
+                appVersion
+            )
+
+        } else {
+            // THIS RUNS FOR:  
+            // ✔ Maven JAR modules  
+            // ✔ Gradle (NO pom.xml)  
+            println "INFO: Uploading artifact (jar) to Nexus"
+
+            nexusArtifactoryUpload(
+                'snapshots',
+                'internalMavenSnapshotRepository',
+                getAppGroupId(),
+                getAppArtifactId(),
+                appVersion
+            )
+        }
+    }
+}
