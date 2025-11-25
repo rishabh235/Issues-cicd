@@ -1,170 +1,77 @@
-// nexusArtifactoryUpload.groovy
-// Supports both Maven and Gradle. Last param gitRepositoryName is optional.
+def call(def repositoryName, def repositoryId, def groupId, def artifactId, def appVersion) {
 
-def call(def repositoryName, def repositoryId, def groupId, def artifactId, def appVersion, def gitRepositoryName = null) {
-
-    // load env props (assumes this function exists)
-    def envProperty = loadEnvironmentProperties()
-    def mavenTool = envProperty.maven_upload_tool
-    def defaultJdk = envProperty.default_jdk
+    def envProperty      = loadEnvironmentProperties()
+    def mavenTool        = envProperty.maven_upload_tool
+    def defaultJdk       = envProperty.default_jdk
     def nexusRepoBaseUrl = envProperty.nexus_repo_base_url
-
-    def buildType = getAppBuildType()
+    def buildType        = getAppBuildType()
 
     println "INFO: Nexus artifact uploading to repository: ${repositoryName}"
-    println "INFO: The app version uploading: ${appVersion}"
+    println "INFO: The app version uploading to Nexus repository: ${appVersion}"
     println "INFO: Build type detected: ${buildType}"
 
-    // Snapshot check
-    if (repositoryName?.toString()?.toLowerCase()?.contains('snapshots') && !("${appVersion}".contains('SNAPSHOT'))) {
-        buildFailed("Attempting to upload a non-snapshot version to the Nexus snapshot repository.\nAction Required: Please ensure that only 'SNAPSHOT' versions are uploaded to snapshot repository.")
+    // Snapshot validation
+    if (repositoryName.contains("snapshots") && !appVersion.contains("SNAPSHOT")) {
+        buildFailed(
+            "Attempting to upload a non-snapshot version to the Nexus snapshot repository.\n" +
+            "Action Required: Please ensure that only 'SNAPSHOT' versions are pushed."
+        )
     }
 
-    // If Gradle and repo name is required by other libs, try to derive repository name from GIT url if not passed
-    if (buildType == 'gradle' && (!gitRepositoryName || gitRepositoryName.trim() == '')) {
-        // try derive from environment: GIT_URL or SCM
-        def derived = null
-        try {
-            if (env.GIT_URL) {
-                // common patterns: git@host:org/repo.git or https://host/org/repo.git
-                def url = env.GIT_URL.toString()
-                // remove .git suffix
-                if (url.endsWith('.git')) {
-                    url = url[0..-5]
-                }
-                // take last token
-                def tokens = url.tokenize('/:')
-                derived = tokens[-1]
-            }
-        } catch (e) {
-            derived = null
+    withEnv([
+            "JAVA_HOME=${tool defaultJdk}",
+            "PATH+MAVEN=${tool defaultJdk}/bin:${tool mavenTool}/bin"
+    ]) {
+
+        // ------------------------------
+        // IF BUILD TYPE IS MAVEN
+        // ------------------------------
+        if (buildType == "maven") {
+
+            // 1) versions:set
+            sh "mvn versions:set -q -DnewVersion=${appVersion}"
+
+            // 2) deploy-file with pom.xml
+            sh """
+                mvn -V -B -e deploy:deploy-file \
+                    -DpomFile=pom.xml \
+                    -Durl=${nexusRepoBaseUrl}/${repositoryName}/ \
+                    -DrepositoryId=${repositoryId} \
+                    -DgroupId=${groupId} \
+                    -DartifactId=${artifactId} \
+                    -Dversion=${appVersion} \
+                    -Dpackaging=jar \
+                    -Dfile=target/${artifactId}-${appVersion}.jar
+            """
+
+            // 3) versions:revert
+            sh "mvn versions:revert -q"
         }
 
-        if (derived) {
-            gitRepositoryName = derived
-            println "INFO: Derived gitRepositoryName for Gradle from GIT_URL: ${gitRepositoryName}"
-        } else {
-            buildFailed("This pipeline library requires repository name as argument for gradle apps. Provide gitRepositoryName in nexusArtifactoryUpload(...) call or ensure env.GIT_URL is available.")
-        }
-    }
+        // ------------------------------
+        // IF BUILD TYPE IS GRADLE
+        // ------------------------------
+        else if (buildType == "gradle") {
 
-    // Determine artifact JAR path (Maven vs Gradle)
-    def filePath = null
-    if (buildType == 'maven') {
-        filePath = "target/${artifactId}-${appVersion}.jar"
-    } else if (buildType == 'gradle') {
-        // try standard gradle outputs: build/libs/<name>-<version>.jar
-        // some gradle projects use project.name instead of artifactId; check multiple possibilities
-        def candidate1 = "build/libs/${artifactId}-${appVersion}.jar"
-        def candidate2 = "build/libs/${gitRepositoryName}-${appVersion}.jar"
-        def candidate3 = "build/libs/${artifactId}.jar"
-        def candidate4 = "build/libs/${gitRepositoryName}.jar"
-
-        if (fileExists(candidate1)) {
-            filePath = candidate1
-        } else if (fileExists(candidate2)) {
-            filePath = candidate2
-        } else if (fileExists(candidate3)) {
-            filePath = candidate3
-        } else if (fileExists(candidate4)) {
-            filePath = candidate4
-        } else {
-            // fallback to naive path (still will fail later if missing)
-            filePath = candidate1
-        }
-    } else {
-        buildFailed("Unsupported build type '${buildType}' during Nexus upload.")
-    }
-
-    // Validate artifact file existence
-    if (!fileExists(filePath)) {
-        buildFailed("Artifact file not found at: ${filePath}. Please ensure the build produced the JAR at this path. Checked as build type '${buildType}'.")
-    }
-
-    // Generate a temporary POM for Gradle (full enough for deploy)
-    def pomFile = "pom.xml"   // default real pom for mvn; will be overridden for gradle
-    def generatedPomCreated = false
-
-    if (buildType == 'gradle') {
-        pomFile = "generated-pom-${artifactId}-${appVersion}.xml"
-        def pomContent = """<?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
-                             http://maven.apache.org/xsd/maven-4.0.0.xsd">
-  <modelVersion>4.0.0</modelVersion>
-
-  <groupId>${groupId}</groupId>
-  <artifactId>${artifactId}</artifactId>
-  <version>${appVersion}</version>
-
-  <packaging>jar</packaging>
-
-  <name>${artifactId}</name>
-  <description>Auto-generated POM for Gradle artifact upload of ${artifactId}</description>
-  <url>https://example.com/${gitRepositoryName ?: artifactId}</url>
-
-  <!-- Optionally add SCM or developers sections if you need them -->
-  <!--
-  <scm>
-    <connection>scm:git:git@github.com:org/${gitRepositoryName}.git</connection>
-    <url>https://github.com/org/${gitRepositoryName}</url>
-  </scm>
-  -->
-</project>
-"""
-        writeFile file: pomFile, text: pomContent
-        generatedPomCreated = true
-        println "INFO: Temporary POM generated for Gradle at: ${pomFile}"
-    } else {
-        // For maven keep pomFile as real 'pom.xml' (read by mvn)
-        pomFile = "pom.xml"
-    }
-
-    // Common deploy: use Maven deploy:deploy-file
-    withEnv(["JAVA_HOME=${tool defaultJdk}", "PATH+MAVEN=${tool defaultJdk}/bin:${tool mavenTool}/bin"]) {
-
-        // if maven flow: update versions (if you used mvn versions plugin earlier)
-        if (buildType == 'maven') {
-            try {
-                sh "mvn versions:set -q -DnewVersion=${appVersion}"
-            } catch (e) {
-                println "WARN: mvn versions:set failed or not applicable: ${e}"
-            }
+            // Only 1 mvn command + generatePom=true
+            sh """
+                mvn -V -B -e deploy:deploy-file \
+                    -DgeneratePom=true \
+                    -Durl=${nexusRepoBaseUrl}/${repositoryName}/ \
+                    -DrepositoryId=${repositoryId} \
+                    -DgroupId=${groupId} \
+                    -DartifactId=${artifactId} \
+                    -Dversion=${appVersion} \
+                    -Dpackaging=jar \
+                    -Dfile=build/libs/${artifactId}-${appVersion}.jar
+            """
         }
 
-        // Build the mvn deploy command (deploy-file)
-        def mvnCmd = """mvn -V -B -e deploy:deploy-file \
--DpomFile=${pomFile} \
--Durl=${nexusRepoBaseUrl}/${repositoryName}/ \
--DrepositoryId=${repositoryId} \
--DgroupId=${groupId} \
--DartifactId=${artifactId} \
--Dversion=${appVersion} \
--Dpackaging=jar \
--Dfile=${filePath}"""
-
-        println "INFO: Executing deploy command (masked): deploy-file for ${artifactId}@${appVersion}"
-        sh mvnCmd
-
-        if (buildType == 'maven') {
-            try {
-                sh "mvn versions:revert -q"
-            } catch (e) {
-                println "WARN: mvn versions:revert failed or not applicable: ${e}"
-            }
+        // ------------------------------
+        // UNKNOWN BUILD TYPE
+        // ------------------------------
+        else {
+            buildFailed("This type of build type '${buildType}' is not supported by this pipeline")
         }
     }
-
-    // cleanup generated pom if any
-    if (generatedPomCreated) {
-        try {
-            sh "rm -f ${pomFile}"
-            println "INFO: Removed temporary POM ${pomFile}"
-        } catch (e) {
-            println "WARN: Could not delete temporary POM ${pomFile}: ${e}"
-        }
-    }
-
-    println "INFO: Artifact upload finished for ${artifactId}-${appVersion}"
 }
