@@ -1,31 +1,33 @@
 node(env.dse_worker_node) {
 
-    // Build parameters
-    def gitRepositoryName = params.REPOSITORY_NAME
-    def gitBranch         = params.BRANCH
+    // Pipeline parameters
+    def gitRepositoryName = params.REPOSITORY_NAME       // e.g. test-squash-repo
+    def gitBranch         = params.BRANCH                // e.g. feature/test
     def gitPullRequestId  = params.PRID ? params.PRID : 'NA'
 
     ansiColor('xterm') {
         try {
 
             stage("Checkout Test Repo") {
-                echo "🔁 Checking out repo: ${gitRepositoryName}  Branch: ${gitBranch}"
+                echo "🔁 Checking out repo: ${gitRepositoryName} | Branch: ${gitBranch}"
 
                 git branch: gitBranch,
-                    credentialsId: 'BitBucket_Access_Token',  // <-- Hardcoded credential ID
-                    url: "https://bitbucket.glb.syfbank.com/scm/sbi/${gitRepositoryName}.git"
+                    credentialsId: 'BITBUCKET_SSH',      // hardcoded credential ID
+                    url: "https://bitbucket-dev.glb.syfbank.com/scm/ewc/${gitRepositoryName}.git"
             }
 
             stage("Validate Squash Commit") {
+
                 if (!params.SKIP_SQUASH_COMMIT_VALIDATION && gitPullRequestId != 'NA') {
 
-                    echo "🔍 Checking commit count for PR: ${gitPullRequestId}"
+                    echo "🔍 Checking commit count for Pull Request ID: ${gitPullRequestId}"
 
-                    def apiUrl = "https://bitbucket.glb.syfbank.com/rest/api/1.0/projects/SBI/repos/${gitRepositoryName}/pull-requests/${gitPullRequestId}/commits"
+                    def apiUrl = "https://bitbucket-dev.glb.syfbank.com/rest/api/1.0/projects/EWC/repos/${gitRepositoryName}/pull-requests/${gitPullRequestId}/commits"
 
                     def response = sh(
                         script: """
-                            curl -s -H "Authorization: Bearer ${BitBucket_Access_Token}" \
+                            curl -s \
+                                 -H "Authorization: Bearer ${BITBUCKET_ACCESS_TOKEN}" \
                                  -H "Accept: application/json" \
                                  "${apiUrl}"
                         """,
@@ -35,25 +37,25 @@ node(env.dse_worker_node) {
                     def parsedResponse = readJSON text: response
                     int commitCount = parsedResponse.values.size()
 
-                    echo "📌 Commits in PR: ${commitCount}"
+                    echo "📌 Commits detected in PR: ${commitCount}"
 
                     if (commitCount > 1) {
-                        error("❌ More than 1 commit found. Please squash commits before merging PR.")
+                        error("❌ ${commitCount} commits found — Please squash to a single commit before merging.")
                     } else {
-                        echo "✔ Validation Passed — Only 1 commit exists."
+                        echo "✔ Squash validation passed — Only one commit exists."
                     }
 
                 } else {
-                    echo "⚠ Skipped squash commit validation (Skip flag or no PRID)"
+                    echo "⚠ Skipping squash validation (Skip flag ON or PRID missing)"
                 }
             }
 
             stage("Dummy Build") {
-                echo "🏗 Running dummy build — POC successful"
+                echo "🏗 Dummy Build Stage — POC flow verified"
             }
 
-        } catch(err) {
-            echo "Pipeline failed: ${err}"
+        } catch (err) {
+            echo "💥 Pipeline failed: ${err}"
             currentBuild.result = 'FAILURE'
             throw err
         }
