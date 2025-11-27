@@ -1,114 +1,61 @@
-def call(def repositoryName, def repositoryId, def groupId, def artifactId, def appVersion) {
+node(env.dse_worker_node) {
 
-    def envProperty      = loadEnvironmentProperties()
-    def mavenTool        = envProperty.maven_upload_tool
-    def defaultJdk       = envProperty.default_jdk
-    def nexusRepoBaseUrl = envProperty.nexus_repo_base_url
-    def buildType        = getAppBuildType()
+    // Build parameters
+    def gitRepositoryName = params.REPOSITORY_NAME
+    def gitBranch         = params.BRANCH
+    def gitPullRequestId  = params.PRID ? params.PRID : 'NA'
 
-    println "INFO: Nexus artifact uploading to repository: ${repositoryName}"
-    println "INFO: The app version uploading to Nexus repository: ${appVersion}"
-    println "INFO: Build type detected: ${buildType}"
+    ansiColor('xterm') {
+        try {
 
-    // Snapshot validation
-    if (repositoryName.contains("snapshots") && !appVersion.contains("SNAPSHOT")) {
-        buildFailed(
-            "Attempting to upload a non-snapshot version to the Nexus snapshot repository.\n" +
-            "Action Required: Please ensure that only 'SNAPSHOT' versions are pushed."
-        )
-    }
+            stage("Checkout Test Repo") {
+                echo "🔁 Checking out repo: ${gitRepositoryName}  Branch: ${gitBranch}"
 
-    withEnv([
-            "JAVA_HOME=${tool defaultJdk}",
-            "PATH+MAVEN=${tool defaultJdk}/bin:${tool mavenTool}/bin"
-    ]) {
+                git branch: gitBranch,
+                    credentialsId: 'BitBucket_Access_Token',  // <-- Hardcoded credential ID
+                    url: "https://bitbucket.glb.syfbank.com/scm/sbi/${gitRepositoryName}.git"
+            }
 
-        // ------------------------------
-        // IF BUILD TYPE IS MAVEN
-        // ------------------------------
-        if (buildType == "maven") {
+            stage("Validate Squash Commit") {
+                if (!params.SKIP_SQUASH_COMMIT_VALIDATION && gitPullRequestId != 'NA') {
 
-            // 1) versions:set
-            sh "mvn versions:set -q -DnewVersion=${appVersion}"
+                    echo "🔍 Checking commit count for PR: ${gitPullRequestId}"
 
-            // 2) deploy-file with pom.xml
-            sh """
-                mvn -V -B -e deploy:deploy-file \
-                    -DpomFile=pom.xml \
-                    -Durl=${nexusRepoBaseUrl}/${repositoryName}/ \
-                    -DrepositoryId=${repositoryId} \
-                    -DgroupId=${groupId} \
-                    -DartifactId=${artifactId} \
-                    -Dversion=${appVersion} \
-                    -Dpackaging=jar \
-                    -Dfile=target/${artifactId}-${appVersion}.jar
-            """
+                    def apiUrl = "https://bitbucket.glb.syfbank.com/rest/api/1.0/projects/SBI/repos/${gitRepositoryName}/pull-requests/${gitPullRequestId}/commits"
 
-            // 3) versions:revert
-            sh "mvn versions:revert -q"
-        }
+                    def response = sh(
+                        script: """
+                            curl -s -H "Authorization: Bearer ${BitBucket_Access_Token}" \
+                                 -H "Accept: application/json" \
+                                 "${apiUrl}"
+                        """,
+                        returnStdout: true
+                    )
 
-        // ------------------------------
-        // IF BUILD TYPE IS GRADLE
-        // ------------------------------
-        else if (buildType == "gradle") {
+                    def parsedResponse = readJSON text: response
+                    int commitCount = parsedResponse.values.size()
 
-            // Only 1 mvn command + generatePom=true
-            sh """
-                mvn -V -B -e deploy:deploy-file \
-                    -DgeneratePom=true \
-                    -Durl=${nexusRepoBaseUrl}/${repositoryName}/ \
-                    -DrepositoryId=${repositoryId} \
-                    -DgroupId=${groupId} \
-                    -DartifactId=${artifactId} \
-                    -Dversion=${appVersion} \
-                    -Dpackaging=jar \
-                    -Dfile=build/libs/${artifactId}-${appVersion}.jar
-            """
-        }
+                    echo "📌 Commits in PR: ${commitCount}"
 
-        // ------------------------------
-        // UNKNOWN BUILD TYPE
-        // ------------------------------
-        else {
-            buildFailed("This type of build type '${buildType}' is not supported by this pipeline")
-        }
-    }
-}
+                    if (commitCount > 1) {
+                        error("❌ More than 1 commit found. Please squash commits before merging PR.")
+                    } else {
+                        echo "✔ Validation Passed — Only 1 commit exists."
+                    }
 
+                } else {
+                    echo "⚠ Skipped squash commit validation (Skip flag or no PRID)"
+                }
+            }
 
+            stage("Dummy Build") {
+                echo "🏗 Running dummy build — POC successful"
+            }
 
-
-
-stage('nexus: publish artifact') {
-    logStage('nexus-publish-artifact') {
-
-        // TRY TO LOAD pom.xml — return null if it doesn't exist (Gradle case)
-        def pom = fileExists('pom.xml') ? readMavenPom(file: 'pom.xml') : null
-
-        if (pom != null && pom.packaging.toString().contains('pom')) {
-            println "INFO: Uploading the ${pom.packaging.toString()} to Nexus artifact repo"
-            nexusArtifactoryPomUpload(
-                'snapshots',
-                'internalMavenSnapshotRepository',
-                getAppGroupId(),
-                getAppArtifactId(),
-                appVersion
-            )
-
-        } else {
-            // THIS RUNS FOR:  
-            // ✔ Maven JAR modules  
-            // ✔ Gradle (NO pom.xml)  
-            println "INFO: Uploading artifact (jar) to Nexus"
-
-            nexusArtifactoryUpload(
-                'snapshots',
-                'internalMavenSnapshotRepository',
-                getAppGroupId(),
-                getAppArtifactId(),
-                appVersion
-            )
+        } catch(err) {
+            echo "Pipeline failed: ${err}"
+            currentBuild.result = 'FAILURE'
+            throw err
         }
     }
 }
