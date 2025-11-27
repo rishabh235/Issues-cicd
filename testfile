@@ -1,61 +1,59 @@
 node(env.dse_worker_node) {
 
-    // Pipeline parameters
-    def gitRepositoryName = params.REPOSITORY_NAME       // e.g. test-squash-repo
-    def gitBranch         = params.BRANCH                // e.g. feature/test
+    // Only parameter you must enter manually for test
     def gitPullRequestId  = params.PRID ? params.PRID : 'NA'
 
     ansiColor('xterm') {
         try {
 
             stage("Checkout Test Repo") {
-                echo "🔁 Checking out repo: ${gitRepositoryName} | Branch: ${gitBranch}"
+                echo "🔁 Checking out test repo branch: develop"
 
-                git branch: gitBranch,
-                    credentialsId: 'BITBUCKET_SSH',      // hardcoded credential ID
-                    url: "https://bitbucket-dev.glb.syfbank.com/scm/ewc/${gitRepositoryName}.git"
+                git branch: "develop",
+                    credentialsId: 'BITBUCKET_SSH',     // hardcoded credential ID
+                    url: "https://bitbucket-dev.glb.syfbank.com/scm/ewc/test-squash-repo.git"  // hardcode repo name
             }
 
-            stage("Validate Squash Commit") {
+            stage("Check All Commits Squashed") {
+                when { expression { return gitPullRequestId != 'NA' && params.SKIP_SQUASH_COMMIT_VALIDATION == false } }
 
-                if (!params.SKIP_SQUASH_COMMIT_VALIDATION && gitPullRequestId != 'NA') {
+                steps {
+                    script {
 
-                    echo "🔍 Checking commit count for Pull Request ID: ${gitPullRequestId}"
+                        echo "🔍 Validating commit count for Pull Request ID: ${gitPullRequestId}"
 
-                    def apiUrl = "https://bitbucket-dev.glb.syfbank.com/rest/api/1.0/projects/EWC/repos/${gitRepositoryName}/pull-requests/${gitPullRequestId}/commits"
+                        def apiUrl = "https://bitbucket-dev.glb.syfbank.com/rest/api/1.0/projects/EWC/repos/test-squash-repo/pull-requests/${gitPullRequestId}/commits"
 
-                    def response = sh(
-                        script: """
-                            curl -s \
-                                 -H "Authorization: Bearer ${BITBUCKET_ACCESS_TOKEN}" \
-                                 -H "Accept: application/json" \
-                                 "${apiUrl}"
-                        """,
-                        returnStdout: true
-                    )
+                        def response = sh(
+                            script: """
+                                curl -s --location \
+                                     --header "Authorization: Bearer ${BITBUCKET_ACCESS_TOKEN}" \
+                                     --header "Accept: application/json" \
+                                     "${apiUrl}"
+                            """,
+                            returnStdout: true
+                        )
 
-                    def parsedResponse = readJSON text: response
-                    int commitCount = parsedResponse.values.size()
+                        def parsedResponse = readJSON text: response
+                        int commitCount = parsedResponse.values.size()
 
-                    echo "📌 Commits detected in PR: ${commitCount}"
+                        echo "📌 Commit count found: ${commitCount}"
 
-                    if (commitCount > 1) {
-                        error("❌ ${commitCount} commits found — Please squash to a single commit before merging.")
-                    } else {
-                        echo "✔ Squash validation passed — Only one commit exists."
+                        if (commitCount > 1) {
+                            error("❌ Multiple commits detected. Please squash before merge.")
+                        } else {
+                            echo "✔ All commits are already squashed."
+                        }
                     }
-
-                } else {
-                    echo "⚠ Skipping squash validation (Skip flag ON or PRID missing)"
                 }
             }
 
             stage("Dummy Build") {
-                echo "🏗 Dummy Build Stage — POC flow verified"
+                echo "🏗 Dummy Stage — POC completed"
             }
 
         } catch (err) {
-            echo "💥 Pipeline failed: ${err}"
+            echo "💥 Build failed: ${err}"
             currentBuild.result = 'FAILURE'
             throw err
         }
