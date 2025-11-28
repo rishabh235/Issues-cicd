@@ -1,33 +1,36 @@
 stage('Squash Commit Validation') {
-    echo "Squash Validation Stage Started"
+    logStage('Squash Commit Validation') {
 
-    if (SKIP_SQUASH_COMMIT_VALIDATION) {
-        echo "Skipping squash validation as requested"
-    } else {
-        echo "Validating squash commit for PR ID: ${gitPullRequestId}"
+        println "Squash validation stage started"
 
-        if (!gitPullRequestId || gitPullRequestId == "NA") {
-            echo "PR ID not provided. Skipping squash validation"
-            return
-        }
-
-        // Fetch PR source branch locally
-        sh """
-            git fetch origin pull-requests/${gitPullRequestId}/from:prSourceBranch
-        """
-
-        // Count commits in PR
-        def commitCount = sh(
-            script: "git rev-list --count HEAD..prSourceBranch",
-            returnStdout: true
-        ).trim().toInteger()
-
-        echo "Commit Count in PR: ${commitCount}"
-
-        if (commitCount > 1) {
-            error "❌ Please squash all commits. Current commit count: ${commitCount}"
+        if (SKIP_SQUASH_COMMIT_VALIDATION) {
+            println "Skipping squash validation as requested"
         } else {
-            echo "✔ Squash validation passed — Only one commit found"
+            println "Validating squash commit for PR ID: ${gitPullRequestId}"
+
+            if (!gitPullRequestId || gitPullRequestId == "NA") {
+                println "PR ID not provided. Skipping squash validation"
+                return
+            }
+
+            // Fetch PR source branch locally
+            sh """
+                git fetch origin pull-requests/${gitPullRequestId}/from:prSourceBranch
+            """
+
+            // Count commits between current branch (HEAD) and PR source branch
+            def commitCount = sh(
+                script: "git rev-list --count HEAD..prSourceBranch",
+                returnStdout: true
+            ).trim() as Integer
+
+            println "Commit count in PR: ${commitCount}"
+
+            if (commitCount > 1) {
+                error "Please squash all commits. Current commit count: ${commitCount}"
+            } else {
+                println "Squash validation passed. Only one commit found"
+            }
         }
     }
 }
