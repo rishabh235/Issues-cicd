@@ -1,61 +1,33 @@
-node(env.dse_worker_node) {
+stage('Check All Commits Squashed') {
+    when { expression { return params.SKIP_SQUASH_COMMIT_VALIDATION == false } }
+    steps {
+        script {
 
-    // Only parameter you must enter manually for test
-    def gitPullRequestId  = params.PRID ? params.PRID : 'NA'
+            echo "🔍 Checking commit count for PR ID: ${gitPullRequestId}"
 
-    ansiColor('xterm') {
-        try {
+            // Bitbucket API call
+            def response = sh(
+                script: """
+                    curl -s --location \
+                      --header "Authorization: Bearer ${BITBUCKET_ACCESS_TOKEN}" \
+                      --header "Accept: application/json" \
+                      "https://bitbucket.glb.syfbank.com/rest/api/1.0/projects/${gitProjectKey}/repos/${gitRepositoryName}/pull-requests/${gitPullRequestId}/commits"
+                """,
+                returnStdout: true
+            )
 
-            stage("Checkout Test Repo") {
-                echo "🔁 Checking out test repo branch: develop"
+            def parsedResponse = readJSON text: response
+            int commitCount = parsedResponse.values.size()
 
-                git branch: "develop",
-                    credentialsId: 'BITBUCKET_SSH',     // hardcoded credential ID
-                    url: "https://bitbucket-dev.glb.syfbank.com/scm/ewc/test-squash-repo.git"  // hardcode repo name
+            echo "📌 Total commits detected in PR: ${commitCount}"
+
+            if (commitCount > 1) {
+                echo "❌ There are multiple commits in this Pull Request. Please squash into a single commit."
+                currentBuild.result = 'FAILURE'
+                error("Stopping pipeline due to non-squashed commits.")
+            } else {
+                echo "✔ Squash validation passed — only 1 commit found."
             }
-
-            stage("Check All Commits Squashed") {
-                when { expression { return gitPullRequestId != 'NA' && params.SKIP_SQUASH_COMMIT_VALIDATION == false } }
-
-                steps {
-                    script {
-
-                        echo "🔍 Validating commit count for Pull Request ID: ${gitPullRequestId}"
-
-                        def apiUrl = "https://bitbucket-dev.glb.syfbank.com/rest/api/1.0/projects/EWC/repos/test-squash-repo/pull-requests/${gitPullRequestId}/commits"
-
-                        def response = sh(
-                            script: """
-                                curl -s --location \
-                                     --header "Authorization: Bearer ${BITBUCKET_ACCESS_TOKEN}" \
-                                     --header "Accept: application/json" \
-                                     "${apiUrl}"
-                            """,
-                            returnStdout: true
-                        )
-
-                        def parsedResponse = readJSON text: response
-                        int commitCount = parsedResponse.values.size()
-
-                        echo "📌 Commit count found: ${commitCount}"
-
-                        if (commitCount > 1) {
-                            error("❌ Multiple commits detected. Please squash before merge.")
-                        } else {
-                            echo "✔ All commits are already squashed."
-                        }
-                    }
-                }
-            }
-
-            stage("Dummy Build") {
-                echo "🏗 Dummy Stage — POC completed"
-            }
-
-        } catch (err) {
-            echo "💥 Build failed: ${err}"
-            currentBuild.result = 'FAILURE'
-            throw err
         }
     }
 }
