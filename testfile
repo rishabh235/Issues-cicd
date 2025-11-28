@@ -1,32 +1,33 @@
-stage('Check All Commits Squashed') {
-    when { expression { return params.SKIP_SQUASH_COMMIT_VALIDATION == false } }
+stage('Squash Commit Validation') {
+    when {
+        expression { return !params.SKIP_SQUASH_COMMIT_VALIDATION }
+    }
     steps {
         script {
+            echo "Validating squash commit for PR ID: ${gitPullRequestId}"
 
-            echo "🔍 Checking commit count for PR ID: ${gitPullRequestId}"
+            if (!gitPullRequestId || gitPullRequestId == "NA") {
+                echo "PR ID missing. Skipping squash validation."
+                return
+            }
 
-            // Bitbucket API call
-            def response = sh(
-                script: """
-                    curl -s --location \
-                      --header "Authorization: Bearer ${BITBUCKET_ACCESS_TOKEN}" \
-                      --header "Accept: application/json" \
-                      "https://bitbucket.glb.syfbank.com/rest/api/1.0/projects/${gitProjectKey}/repos/${gitRepositoryName}/pull-requests/${gitPullRequestId}/commits"
-                """,
+            // Fetch PR source ref (Bitbucket format)
+            sh """
+                git fetch origin pull-requests/${gitPullRequestId}/from:prSourceBranch
+            """
+
+            // Count commits between branch2 (current) and PR source
+            def commitCount = sh(
+                script: "git rev-list --count HEAD..prSourceBranch",
                 returnStdout: true
-            )
+            ).trim().toInteger()
 
-            def parsedResponse = readJSON text: response
-            int commitCount = parsedResponse.values.size()
-
-            echo "📌 Total commits detected in PR: ${commitCount}"
+            echo "Commit Count in PR: ${commitCount}"
 
             if (commitCount > 1) {
-                echo "❌ There are multiple commits in this Pull Request. Please squash into a single commit."
-                currentBuild.result = 'FAILURE'
-                error("Stopping pipeline due to non-squashed commits.")
+                error("❌ Please squash all commits. Current commit count: ${commitCount}")
             } else {
-                echo "✔ Squash validation passed — only 1 commit found."
+                echo "✔ Squash validation passed — Only one commit found."
             }
         }
     }
