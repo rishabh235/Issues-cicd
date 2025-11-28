@@ -1,34 +1,33 @@
 stage('Squash Commit Validation') {
-    when {
-        expression { return !params.SKIP_SQUASH_COMMIT_VALIDATION }
-    }
-    steps {
-        script {
-            echo "Validating squash commit for PR ID: ${gitPullRequestId}"
+    echo "Squash Validation Stage Started"
 
-            if (!gitPullRequestId || gitPullRequestId == "NA") {
-                echo "PR ID missing. Skipping squash validation."
-                return
-            }
+    if (SKIP_SQUASH_COMMIT_VALIDATION) {
+        echo "Skipping squash validation as requested"
+    } else {
+        echo "Validating squash commit for PR ID: ${gitPullRequestId}"
 
-            // Fetch PR source ref (Bitbucket format)
-            sh """
-                git fetch origin pull-requests/${gitPullRequestId}/from:prSourceBranch
-            """
+        if (!gitPullRequestId || gitPullRequestId == "NA") {
+            echo "PR ID not provided. Skipping squash validation"
+            return
+        }
 
-            // Count commits between branch2 (current) and PR source
-            def commitCount = sh(
-                script: "git rev-list --count HEAD..prSourceBranch",
-                returnStdout: true
-            ).trim().toInteger()
+        // Fetch PR source branch locally
+        sh """
+            git fetch origin pull-requests/${gitPullRequestId}/from:prSourceBranch
+        """
 
-            echo "Commit Count in PR: ${commitCount}"
+        // Count commits in PR
+        def commitCount = sh(
+            script: "git rev-list --count HEAD..prSourceBranch",
+            returnStdout: true
+        ).trim().toInteger()
 
-            if (commitCount > 1) {
-                error("❌ Please squash all commits. Current commit count: ${commitCount}")
-            } else {
-                echo "✔ Squash validation passed — Only one commit found."
-            }
+        echo "Commit Count in PR: ${commitCount}"
+
+        if (commitCount > 1) {
+            error "❌ Please squash all commits. Current commit count: ${commitCount}"
+        } else {
+            echo "✔ Squash validation passed — Only one commit found"
         }
     }
 }
