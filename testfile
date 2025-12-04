@@ -1,36 +1,191 @@
-stage('Squash Commit Validation') {
-    logStage('Squash Commit Validation') {
+# Bitbucket Merge Strategies
 
-        println "Squash validation stage started"
+This document explains different types of merge strategies available in Bitbucket, their behavior, advantages, disadvantages, and when to use them.
 
-        if (SKIP_SQUASH_COMMIT_VALIDATION) {
-            println "Skipping squash validation as requested"
-        } else {
-            println "Validating squash commit for PR ID: ${gitPullRequestId}"
+---
 
-            if (!gitPullRequestId || gitPullRequestId == "NA") {
-                println "PR ID not provided. Skipping squash validation"
-                return
-            }
+## 1. Merge Commit
 
-            // Fetch PR source branch locally
-            sh """
-                git fetch origin pull-requests/${gitPullRequestId}/from:prSourceBranch
-            """
+### **Description**
 
-            // Count commits between current branch (HEAD) and PR source branch
-            def commitCount = sh(
-                script: "git rev-list --count HEAD..prSourceBranch",
-                returnStdout: true
-            ).trim() as Integer
+Creates a new merge commit that combines two branches. The commit history of both branches is preserved without modification.
 
-            println "Commit count in PR: ${commitCount}"
+### **How it works**
 
-            if (commitCount > 1) {
-                error "Please squash all commits. Current commit count: ${commitCount}"
-            } else {
-                println "Squash validation passed. Only one commit found"
-            }
-        }
-    }
-}
+* A merge commit is created even if the merge could have been resolved with fast‑forward.
+* Branch structure remains visible.
+
+### **Pros**
+
+* Full history of branches is preserved.
+* Easier to track merge points and understand history.
+* Good for large teams.
+
+### **Cons**
+
+* History becomes cluttered with merge commits.
+* Can be harder to follow when many merges happen.
+
+### **When to use**
+
+* When maintaining a detailed history is important.
+* For long‑running feature branches.
+
+---
+
+## 2. Fast Forward
+
+### **Description**
+
+Moves the branch pointer forward without creating a merge commit.
+
+### **How it works**
+
+* Only works if the target branch does not have diverging commits.
+* Commit history is linear.
+
+### **Pros**
+
+* Clean, linear history.
+* No extra merge commit.
+
+### **Cons**
+
+* Does not show when the merge happened.
+* Harder to understand feature boundaries.
+
+### **When to use**
+
+* Small teams or solo development.
+* Strict linear history requirement.
+
+---
+
+## 3. Fast Forward Only
+
+### **Description**
+
+Merges only if a fast‑forward merge is possible. If not possible, merge is blocked.
+
+### **Pros**
+
+* Forces clean linear history.
+* Prevents unnecessary merge commits.
+
+### **Cons**
+
+* If branches diverge, merge cannot happen until rebased.
+
+### **When to use**
+
+* Environments that enforce very strict linear commit history.
+
+---
+
+## 4. Rebase and Merge
+
+### **Description**
+
+Rewrites commit history of the source branch and applies it on top of the destination branch, then performs a fast‑forward merge.
+
+### **Pros**
+
+* Clean history without extra commits.
+* Maintains feature commits in sequence.
+
+### **Cons**
+
+* Rewrites history, which can be risky for shared branches.
+* Potential conflicts during rebase.
+
+### **When to use**
+
+* When a clean linear history is required and developers understand rebase.
+
+---
+
+## 5. Rebase and Fast‑Forward
+
+### **Description**
+
+Similar to "Rebase and Merge" but guarantees a fast‑forward merge only.
+
+### **Pros**
+
+* Strict linear history.
+* No merge commits created.
+
+### **Cons**
+
+* Requires manual conflict resolution if branches diverge.
+
+### **When to use**
+
+* Teams prioritizing clean histories and frequent rebasing.
+
+---
+
+## 6. Squash
+
+### **Description**
+
+Combines all commits in the source branch into a single commit before merging.
+
+### **Pros**
+
+* Very clean history.
+* Good for merging large feature branches with many small commits.
+
+### **Cons**
+
+* Loses individual commit history.
+* Harder to rollback or review change progress.
+
+### **When to use**
+
+* For features with lots of work‑in‑progress commits.
+
+---
+
+## 7. Squash, Fast‑Forward Only
+
+### **Description**
+
+Squashes multiple commits into one and applies it with a fast‑forward merge.
+
+### **Pros**
+
+* Enforces a single commit per feature.
+* Ensures linear history.
+
+### **Cons**
+
+* Merge is blocked if fast‑forward isn't possible.
+
+### **When to use**
+
+* Clean and minimal commit history enforcement.
+
+---
+
+# Recommended Strategy Based on Use Case
+
+| Use Case                                 | Recommended Strategy             |
+| ---------------------------------------- | -------------------------------- |
+| Large enterprise team / detailed history | Merge Commit                     |
+| Clean linear history required            | Fast‑Forward / Fast‑Forward Only |
+| Clean feature history without clutter    | Rebase and Merge                 |
+| Many small commits, need simplicity      | Squash                           |
+| Strict one‑commit‑per‑feature            | Squash + Fast‑Forward Only       |
+
+---
+
+# Visual Summary
+
+```
+Feature Branch A ---●---●-----●--------------
+                     \                          
+Main Branch        ----●---------------------- fast‑forward
+```
+
+Use wisely based on team workflow and project requirements.
