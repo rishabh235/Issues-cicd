@@ -1,191 +1,107 @@
-# Bitbucket Merge Strategies
-
-This document explains different types of merge strategies available in Bitbucket, their behavior, advantages, disadvantages, and when to use them.
-
----
-
-## 1. Merge Commit
-
-### **Description**
-
-Creates a new merge commit that combines two branches. The commit history of both branches is preserved without modification.
-
-### **How it works**
-
-* A merge commit is created even if the merge could have been resolved with fast‑forward.
-* Branch structure remains visible.
-
-### **Pros**
-
-* Full history of branches is preserved.
-* Easier to track merge points and understand history.
-* Good for large teams.
-
-### **Cons**
-
-* History becomes cluttered with merge commits.
-* Can be harder to follow when many merges happen.
-
-### **When to use**
-
-* When maintaining a detailed history is important.
-* For long‑running feature branches.
-
----
-
-## 2. Fast Forward
-
-### **Description**
-
-Moves the branch pointer forward without creating a merge commit.
-
-### **How it works**
-
-* Only works if the target branch does not have diverging commits.
-* Commit history is linear.
-
-### **Pros**
-
-* Clean, linear history.
-* No extra merge commit.
-
-### **Cons**
-
-* Does not show when the merge happened.
-* Harder to understand feature boundaries.
-
-### **When to use**
-
-* Small teams or solo development.
-* Strict linear history requirement.
-
----
-
-## 3. Fast Forward Only
-
-### **Description**
-
-Merges only if a fast‑forward merge is possible. If not possible, merge is blocked.
-
-### **Pros**
-
-* Forces clean linear history.
-* Prevents unnecessary merge commits.
-
-### **Cons**
-
-* If branches diverge, merge cannot happen until rebased.
-
-### **When to use**
-
-* Environments that enforce very strict linear commit history.
-
----
-
-## 4. Rebase and Merge
-
-### **Description**
-
-Rewrites commit history of the source branch and applies it on top of the destination branch, then performs a fast‑forward merge.
-
-### **Pros**
-
-* Clean history without extra commits.
-* Maintains feature commits in sequence.
-
-### **Cons**
-
-* Rewrites history, which can be risky for shared branches.
-* Potential conflicts during rebase.
-
-### **When to use**
-
-* When a clean linear history is required and developers understand rebase.
-
----
-
-## 5. Rebase and Fast‑Forward
-
-### **Description**
-
-Similar to "Rebase and Merge" but guarantees a fast‑forward merge only.
-
-### **Pros**
-
-* Strict linear history.
-* No merge commits created.
-
-### **Cons**
-
-* Requires manual conflict resolution if branches diverge.
-
-### **When to use**
-
-* Teams prioritizing clean histories and frequent rebasing.
-
----
-
-## 6. Squash
-
-### **Description**
-
-Combines all commits in the source branch into a single commit before merging.
-
-### **Pros**
-
-* Very clean history.
-* Good for merging large feature branches with many small commits.
-
-### **Cons**
-
-* Loses individual commit history.
-* Harder to rollback or review change progress.
-
-### **When to use**
-
-* For features with lots of work‑in‑progress commits.
-
----
-
-## 7. Squash, Fast‑Forward Only
-
-### **Description**
-
-Squashes multiple commits into one and applies it with a fast‑forward merge.
-
-### **Pros**
-
-* Enforces a single commit per feature.
-* Ensures linear history.
-
-### **Cons**
-
-* Merge is blocked if fast‑forward isn't possible.
-
-### **When to use**
-
-* Clean and minimal commit history enforcement.
-
----
-
-# Recommended Strategy Based on Use Case
-
-| Use Case                                 | Recommended Strategy             |
-| ---------------------------------------- | -------------------------------- |
-| Large enterprise team / detailed history | Merge Commit                     |
-| Clean linear history required            | Fast‑Forward / Fast‑Forward Only |
-| Clean feature history without clutter    | Rebase and Merge                 |
-| Many small commits, need simplicity      | Squash                           |
-| Strict one‑commit‑per‑feature            | Squash + Fast‑Forward Only       |
-
----
-
-# Visual Summary
-
-```
-Feature Branch A ---●---●-----●--------------
-                     \                          
-Main Branch        ----●---------------------- fast‑forward
-```
-
-Use wisely based on team workflow and project requirements.
+def call(def repositoryName, def repositoryId, def groupId, def artifactId, def appVersion, def buildType) {
+
+    def envProperty = loadEnvironmentProperties()
+    def mavenTool = envProperty.maven_upload_tool
+    def defaultJdk = envProperty.default_jdk
+    def nexusRepoBaseUrl = envProperty.nexus_repo_base_url
+
+    println "INFO: Nexus artifact uploading to repository: ${repositoryName}"
+    println "INFO: App version uploading: ${appVersion}"
+    println "INFO: Build type detected: ${buildType}"
+
+    if (repositoryName.contains('snapshots') && !appVersion.contains('SNAPSHOT')) {
+        buildFailed("Attempting to upload a non-snapshot version to the Nexus snapshot repository.")
+    }
+
+    // Choose pom file location for Gradle BOM
+    def gradlePomFile = "build/publications/mavenJava/pom-default.xml"
+
+    withEnv(["JAVA_HOME=${tool defaultJdk}", "PATH+MAVEN=${tool defaultJdk}/bin:${tool mavenTool}/bin"]) {
+
+        if (buildType == "maven") {
+
+            sh "mvn versions:set -q -DnewVersion=${appVersion}"
+
+            sh """
+                mvn -V -B -e deploy:deploy-file \
+                -DpomFile=pom.xml \
+                -Durl=${nexusRepoBaseUrl}/${repositoryName}/ \
+                -DrepositoryId=${repositoryId} \
+                -DgroupId=${groupId} \
+                -DartifactId=${artifactId} \
+                -Dversion=${appVersion} \
+                -Dpackaging=pom \
+                -Dfile=pom.xml
+            """
+
+            sh "mvn versions:revert -q"
+
+        } else if (buildType == "gradle") {
+
+            if (!fileExists(gradlePomFile)) {
+                buildFailed("Gradle BOM pom file not found at ${gradlePomFile}")
+            }
+
+            sh """
+                mvn -V -B -e deploy:deploy-file \
+                -Dfile=${gradlePomFile} \
+                -Durl=${nexusRepoBaseUrl}/${repositoryName}/ \
+                -DrepositoryId=${repositoryId} \
+                -DgroupId=${groupId} \
+                -DartifactId=${artifactId} \
+                -Dversion=${appVersion} \
+                -Dpackaging=pom
+            """
+
+        } else {
+
+            buildFailed("Unsupported build type detected: '${buildType}'.")
+        }
+    }
+}
+
+
+≈========
+
+
+stage('nexus: publish artifact') {
+    logStage('nexus-publish-artifact') {
+
+        def pom = null
+
+        // Detect build type / BOM type
+        if (fileExists('pom.xml')) {
+            pom = readMavenPom(file: 'pom.xml')
+            println "INFO: Detected Maven project"
+        } else if (fileExists('build/publications/mavenJava/pom-default.xml')) {
+            pom = readMavenPom(file: 'build/publications/mavenJava/pom-default.xml')
+            println "INFO: Detected Gradle BOM project"
+        } else {
+            buildFailed("Unable to publish: No pom.xml or Gradle BOM pom found.")
+        }
+
+        // If BOM packaging -> upload POM
+        if (pom.packaging.toString().contains('pom')) {
+            println "INFO: Uploading BOM (${pom.packaging}) to Nexus repository"
+
+            nexusArtifactoryPomUpload(
+                'snapshots',
+                'internalMavenSnapshotRepository',
+                getAppGroupId(),             // <---- Use existing helper
+                getAppArtifactId(),           // <---- Use existing helper
+                appVersion
+            )
+
+        } else {
+            println "INFO: Uploading artifact (jar) to Nexus repository"
+
+            nexusArtifactoryUpload(
+                'snapshots',
+                'internalMavenSnapshotRepository',
+                getAppGroupId(),                 // same method as before
+                getAppArtifactId(gitRepositoryName),
+                appVersion
+            )
+        }
+    }
+}
