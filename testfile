@@ -1,75 +1,44 @@
-def call(def repositoryName, def repositoryId, def groupId, def artifactId, def appVersion, def buildType) {
+withEnv(["JAVA_HOME=${tool defaultJdk}", "PATH+MAVEN=${tool defaultJdk}/bin:${tool mavenTool}/bin"]) {
 
-    def envProperty = loadEnvironmentProperties()
-    def mavenTool = envProperty.maven_upload_tool
-    def defaultJdk = envProperty.default_jdk
-    def nexusRepoBaseUrl = envProperty.nexus_repo_base_url
-
-    println "INFO: Nexus artifact uploading to repository: ${repositoryName}"
-    println "INFO: App version uploading: ${appVersion}"
-    println "INFO: Build type detected: ${buildType}"
-
-    if (repositoryName.contains('snapshots') && !appVersion.contains('SNAPSHOT')) {
-        buildFailed("Attempting to upload a non-snapshot version to the Nexus snapshot repository.")
+    // Detect file to upload (maven or gradle)
+    def pomFilePath = "pom.xml"
+    if (!fileExists("pom.xml") && fileExists("build/publications/mavenJava/pom-default.xml")) {
+        pomFilePath = "build/publications/mavenJava/pom-default.xml"
+        println "INFO: Detected Gradle BOM. Uploading ${pomFilePath}"
+    } else {
+        println "INFO: Detected Maven project. Uploading pom.xml"
     }
 
-    // Choose pom file location for Gradle BOM
-    def gradlePomFile = "build/publications/mavenJava/pom-default.xml"
+    // Only Maven BOM needs version set & revert
+    if (pomFilePath == "pom.xml") {
+        sh "mvn versions:set -q -DnewVersion=${appVersion}"
+    }
 
-    withEnv(["JAVA_HOME=${tool defaultJdk}", "PATH+MAVEN=${tool defaultJdk}/bin:${tool mavenTool}/bin"]) {
+    sh """
+        mvn -V -B -e deploy:deploy-file \
+        -Dfile=${pomFilePath} \
+        -Durl=${nexusRepoBaseUrl}/${repositoryName}/ \
+        -DrepositoryId=${repositoryId} \
+        -DgroupId=${groupId} \
+        -DartifactId=${artifactId} \
+        -Dversion=${appVersion} \
+        -Dpackaging=pom
+    """
 
-        if (buildType == "maven") {
-
-            sh "mvn versions:set -q -DnewVersion=${appVersion}"
-
-            sh """
-                mvn -V -B -e deploy:deploy-file \
-                -DpomFile=pom.xml \
-                -Durl=${nexusRepoBaseUrl}/${repositoryName}/ \
-                -DrepositoryId=${repositoryId} \
-                -DgroupId=${groupId} \
-                -DartifactId=${artifactId} \
-                -Dversion=${appVersion} \
-                -Dpackaging=pom \
-                -Dfile=pom.xml
-            """
-
-            sh "mvn versions:revert -q"
-
-        } else if (buildType == "gradle") {
-
-            if (!fileExists(gradlePomFile)) {
-                buildFailed("Gradle BOM pom file not found at ${gradlePomFile}")
-            }
-
-            sh """
-                mvn -V -B -e deploy:deploy-file \
-                -Dfile=${gradlePomFile} \
-                -Durl=${nexusRepoBaseUrl}/${repositoryName}/ \
-                -DrepositoryId=${repositoryId} \
-                -DgroupId=${groupId} \
-                -DartifactId=${artifactId} \
-                -Dversion=${appVersion} \
-                -Dpackaging=pom
-            """
-
-        } else {
-
-            buildFailed("Unsupported build type detected: '${buildType}'.")
-        }
+    if (pomFilePath == "pom.xml") {
+        sh "mvn versions:revert -q"
     }
 }
 
 
-≈========
-
+=====
 
 stage('nexus: publish artifact') {
     logStage('nexus-publish-artifact') {
 
         def pom = null
 
-        // Detect build type / BOM type
+        // Detect Maven or Gradle BOM pom file
         if (fileExists('pom.xml')) {
             pom = readMavenPom(file: 'pom.xml')
             println "INFO: Detected Maven project"
@@ -80,25 +49,25 @@ stage('nexus: publish artifact') {
             buildFailed("Unable to publish: No pom.xml or Gradle BOM pom found.")
         }
 
-        // If BOM packaging -> upload POM
+        // Upload BOM if packaging = pom
         if (pom.packaging.toString().contains('pom')) {
-            println "INFO: Uploading BOM (${pom.packaging}) to Nexus repository"
+            println "INFO: Uploading BOM POM (${pom.artifactId}-${pom.version}.pom) to Nexus repository"
 
             nexusArtifactoryPomUpload(
                 'snapshots',
                 'internalMavenSnapshotRepository',
-                getAppGroupId(),             // <---- Use existing helper
-                getAppArtifactId(),           // <---- Use existing helper
+                getAppGroupId(),
+                getAppArtifactId(),
                 appVersion
             )
 
         } else {
-            println "INFO: Uploading artifact (jar) to Nexus repository"
+            println "INFO: Uploading artifact JAR to Nexus"
 
             nexusArtifactoryUpload(
                 'snapshots',
                 'internalMavenSnapshotRepository',
-                getAppGroupId(),                 // same method as before
+                getAppGroupId(),
                 getAppArtifactId(gitRepositoryName),
                 appVersion
             )
