@@ -1,76 +1,78 @@
-withEnv(["JAVA_HOME=${tool defaultJdk}", "PATH+MAVEN=${tool defaultJdk}/bin:${tool mavenTool}/bin"]) {
+def call(def jdkTool = null, def appVersion, def gitRepositoryName) {
 
-    // Detect file to upload (maven or gradle)
-    def pomFilePath = "pom.xml"
-    if (!fileExists("pom.xml") && fileExists("build/publications/mavenJava/pom-default.xml")) {
-        pomFilePath = "build/publications/mavenJava/pom-default.xml"
-        println "INFO: Detected Gradle BOM. Uploading ${pomFilePath}"
-    } else {
-        println "INFO: Detected Maven project. Uploading pom.xml"
-    }
+    def envProperty = loadEnvironmentProperties()
 
-    // Only Maven BOM needs version set & revert
-    if (pomFilePath == "pom.xml") {
-        sh "mvn versions:set -q -DnewVersion=${appVersion}"
-    }
+    def jdkVersion = jdkTool ?: envProperty.default_jdk
+    def gradleTool = envProperty.gradle_tool
+    def nexusRepoGroupUrl = envProperty.nexus_repo_group_url
+    def nexusRepoCredential = envProperty.nexus_repo_auth_credential_id
 
-    sh """
-        mvn -V -B -e deploy:deploy-file \
-        -Dfile=${pomFilePath} \
-        -Durl=${nexusRepoBaseUrl}/${repositoryName}/ \
-        -DrepositoryId=${repositoryId} \
-        -DgroupId=${groupId} \
-        -DartifactId=${artifactId} \
-        -Dversion=${appVersion} \
-        -Dpackaging=pom
-    """
+    def customArtifactName = getAppArtifactId(gitRepositoryName)
 
-    if (pomFilePath == "pom.xml") {
-        sh "mvn versions:revert -q"
-    }
-}
+    // Copy init.gradle from shared library
+    def gradleInitFileContent = libraryResource('pipeline-global-config/gradle-build-config/init.gradle')
+    writeFile file: 'init.gradle', text: gradleInitFileContent
 
+    println "INFO: Pipeline-managed Gradle init.gradle copied to workspace"
 
-=====
+    withEnv([
+        "JAVA_HOME=${tool jdkVersion}",
+        "PATH+JAVA=${tool jdkVersion}/bin",
+        "PATH+GRADLE=${tool gradleTool}/bin"
+    ]) {
 
-stage('nexus: publish artifact') {
-    logStage('nexus-publish-artifact') {
-
-        def pom = null
-
-        // Detect Maven or Gradle BOM pom file
-        if (fileExists('pom.xml')) {
-            pom = readMavenPom(file: 'pom.xml')
-            println "INFO: Detected Maven project"
-        } else if (fileExists('build/publications/mavenJava/pom-default.xml')) {
-            pom = readMavenPom(file: 'build/publications/mavenJava/pom-default.xml')
-            println "INFO: Detected Gradle BOM project"
-        } else {
-            buildFailed("Unable to publish: No pom.xml or Gradle BOM pom found.")
-        }
-
-        // Upload BOM if packaging = pom
-        if (pom.packaging.toString().contains('pom')) {
-            println "INFO: Uploading BOM POM (${pom.artifactId}-${pom.version}.pom) to Nexus repository"
-
-            nexusArtifactoryPomUpload(
-                'snapshots',
-                'internalMavenSnapshotRepository',
-                getAppGroupId(),
-                getAppArtifactId(),
-                appVersion
+        withCredentials([
+            usernamePassword(
+                credentialsId: nexusRepoCredential,
+                usernameVariable: 'USERNAME',
+                passwordVariable: 'PASSWORD'
             )
+        ]) {
 
-        } else {
-            println "INFO: Uploading artifact JAR to Nexus"
+            boolean isJarProject = fileExists('src')
 
-            nexusArtifactoryUpload(
-                'snapshots',
-                'internalMavenSnapshotRepository',
-                getAppGroupId(),
-                getAppArtifactId(gitRepositoryName),
-                appVersion
-            )
+            if (isJarProject) {
+
+                println "INFO: src/ directory found → JAR project build"
+
+                sh """
+                    gradle clean build jacocoTestReport \\
+                    --init-script init.gradle \\
+                    -PcustomAppVersion=${appVersion} \\
+                    -PcustomArtifactName=${customArtifactName} \\
+                    -Dnexus_url=${nexusRepoGroupUrl} \\
+                    -Dnexus_username=${USERNAME} \\
+                    -Dnexus_password=${PASSWORD} \\
+                    -g /appbin/install/Gradle_Cache/${gitRepositoryName}
+                """
+
+            } else {
+
+                println "INFO: src/ directory NOT found → BOM/POM-only build"
+
+                sh """
+                    gradle clean generatePomFileForMavenJavaPublication \\
+                    --init-script init.gradle \\
+                    -PcustomAppVersion=${appVersion} \\
+                    -PcustomArtifactName=${customArtifactName} \\
+                    -Dnexus_url=${nexusRepoGroupUrl} \\
+                    -Dnexus_username=${USERNAME} \\
+                    -Dnexus_password=${PASSWORD} \\
+                    -g /appbin/install/Gradle_Cache/${gitRepositoryName}
+                """
+
+                sh """
+                    mv build/publications/mavenJava/pom-default.xml \
+                       build/publications/mavenJava/${customArtifactName}-${appVersion}.pom
+                """
+            }
         }
+    }
+
+    // Publish test results only if present
+    if (fileExists('build/test-results/test')) {
+        junit allowEmptyResults: true,
+              skipPublishingChecks: true,
+              testResults: '**/build/test-results/test/*.xml'
     }
 }
