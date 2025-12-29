@@ -1,40 +1,43 @@
-stage('nexus: publish artifact') {
+def validateSingleCommitInPR(String targetBranch = 'main') {
 
-    logStage('nexus-publish-artifact') {
+    if (!env.CHANGE_ID && (gitPullRequestId == null || gitPullRequestId == 'NA')) {
+        echo "Not a PR build. Skipping atomic commit validation."
+        return
+    }
 
-        def pom = fileExists('pom.xml')
-            ? readMavenPom(file: 'pom.xml')
-            : (
-                fileExists("build/publications/mavenJava/${getAppArtifactId(gitRepositoryName)}-${appVersion}.pom")
-                    ? readMavenPom(
-                        file: "build/publications/mavenJava/${getAppArtifactId(gitRepositoryName)}-${appVersion}.pom"
-                      )
-                    : null
-              )
+    echo "Validating atomic commit for PR..."
 
-        if (pom != null && pom.packaging.toString().contains('pom')) {
+    sh "git fetch origin ${targetBranch}"
 
-            println "INFO: Uploading the ${pom.packaging.toString()} to Nexus artifact repo"
+    def commitCount = sh(
+        script: "git rev-list --count origin/${targetBranch}..HEAD",
+        returnStdout: true
+    ).trim()
 
-            nexusArtifactoryPomUpload(
-                'snapshots',
-                'internalMavenSnapshotRepository',
-                getAppGroupId(),
-                getAppArtifactId(gitRepositoryName),
-                appVersion
-            )
+    echo "Commit count in PR: ${commitCount}"
 
-        } else {
+    if (commitCount.toInteger() > 1) {
+        error("""
+❌ ATOMIC COMMIT ENFORCEMENT FAILED
+PR contains ${commitCount} commits.
+Please squash your commits before merging into ${targetBranch}.
+        """)
+    }
 
-            println "INFO: Uploading artifact (jar) to Nexus"
+    echo "✅ Atomic commit validation passed."
+}
 
-            nexusArtifactoryUpload(
-                'snapshots',
-                'internalMavenSnapshotRepository',
-                getAppGroupId(),
-                getAppArtifactId(gitRepositoryName),
-                appVersion
-            )
-        }
+
+
+
+--------
+
+stage('checkout') {
+    logStage('checkout') {
+
+        gitSCMCodeCheckout(gitProjectKey, gitRepositoryName, gitBranch)
+
+        // 🔐 Enforce atomic commit for PRs
+        validateSingleCommitInPR('main')
     }
 }
