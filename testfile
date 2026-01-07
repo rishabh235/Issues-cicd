@@ -1,11 +1,19 @@
-def validateSingleCommitInPR(String targetBranch = 'main') {
+def validateSingleCommitInPR() {
 
+    // Skip if not a PR build
     if (!env.CHANGE_ID && (gitPullRequestId == null || gitPullRequestId == 'NA')) {
         echo "Not a PR build. Skipping atomic commit validation."
         return
     }
 
-    echo "Validating atomic commit for PR..."
+    // Resolve target branch dynamically
+    def targetBranch = env.CHANGE_TARGET ?: gitBranch
+
+    if (!targetBranch) {
+        error "Unable to resolve target branch for PR. Atomic commit validation aborted."
+    }
+
+    echo "Validating atomic commit for PR against target branch: ${targetBranch}"
 
     sh "git fetch origin ${targetBranch}"
 
@@ -20,24 +28,9 @@ def validateSingleCommitInPR(String targetBranch = 'main') {
         error("""
 ❌ ATOMIC COMMIT ENFORCEMENT FAILED
 PR contains ${commitCount} commits.
-Please squash your commits before merging into ${targetBranch}.
+Please squash commits before merging into '${targetBranch}'.
         """)
     }
 
     echo "✅ Atomic commit validation passed."
-}
-
-
-
-
---------
-
-stage('checkout') {
-    logStage('checkout') {
-
-        gitSCMCodeCheckout(gitProjectKey, gitRepositoryName, gitBranch)
-
-        // 🔐 Enforce atomic commit for PRs
-        validateSingleCommitInPR('main')
-    }
 }
