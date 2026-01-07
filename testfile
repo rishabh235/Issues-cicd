@@ -1,45 +1,40 @@
-
 def call() {
 
-    // Only run for PR builds
-    if (!env.CHANGE_ID) {
-        echo "Not a PR build. Skipping single-commit validation."
-        return
-    }
+    // 🔒 HARD-CODED BASE BRANCH (change later if needed)
+    def baseBranch = 'atomic-test'
 
-    echo "Validating PR commit policy"
-    echo "PR ID         : ${env.CHANGE_ID}"
-    echo "Source Branch : ${env.CHANGE_BRANCH}"
-    echo "Target Branch : ${env.CHANGE_TARGET}"
+    echo "Validating single-commit policy"
+    echo "Base branch (hardcoded) : ${baseBranch}"
 
-    // Make sure target branch is available
-    sh """
-        git fetch origin ${env.CHANGE_TARGET}
-    """
+    // Current branch (for visibility only)
+    def currentBranch = sh(
+        script: 'git rev-parse --abbrev-ref HEAD',
+        returnStdout: true
+    ).trim()
 
-    // Count commits between target and PR HEAD
+    echo "Current checked-out branch : ${currentBranch}"
+
+    // Ensure base branch is present locally
+    sh "git fetch origin ${baseBranch}"
+
+    // Count commits ahead of base branch
     def commitCount = sh(
-        script: "git rev-list --count origin/${env.CHANGE_TARGET}..HEAD",
+        script: "git rev-list --count origin/${baseBranch}..HEAD",
         returnStdout: true
     ).trim().toInteger()
 
-    echo "Commit count in PR: ${commitCount}"
+    echo "Commits ahead of ${baseBranch}: ${commitCount}"
 
     if (commitCount > 1) {
         error """
-❌ PR VALIDATION FAILED
+❌ COMMIT POLICY VIOLATION
 
-This PR contains ${commitCount} commits.
-Only ONE commit is allowed.
+Branch '${currentBranch}' has ${commitCount} commits ahead of '${baseBranch}'.
+Only ONE commit is allowed before merge.
 
-Please squash your commits before raising the PR.
-
-How to fix:
-git rebase -i origin/${env.CHANGE_TARGET}
-# squash commits
-git push -f
+Please squash your commits.
 """
     }
 
-    echo "✅ PR commit validation passed"
+    echo "✅ Single-commit validation passed"
 }
