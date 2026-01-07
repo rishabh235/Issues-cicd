@@ -1,25 +1,25 @@
+
 def call() {
 
-    // Run only for PR builds
+    // Only run for PR builds
     if (!env.CHANGE_ID) {
         echo "Not a PR build. Skipping single-commit validation."
         return
     }
 
-    echo "PR detected: #${env.CHANGE_ID}"
+    echo "Validating PR commit policy"
+    echo "PR ID         : ${env.CHANGE_ID}"
     echo "Source Branch : ${env.CHANGE_BRANCH}"
     echo "Target Branch : ${env.CHANGE_TARGET}"
 
-    // Ensure target branch is available locally
+    // Make sure target branch is available
     sh """
         git fetch origin ${env.CHANGE_TARGET}
     """
 
-    // Count commits in PR
+    // Count commits between target and PR HEAD
     def commitCount = sh(
-        script: """
-            git rev-list --count origin/${env.CHANGE_TARGET}..HEAD
-        """,
+        script: "git rev-list --count origin/${env.CHANGE_TARGET}..HEAD",
         returnStdout: true
     ).trim().toInteger()
 
@@ -27,22 +27,19 @@ def call() {
 
     if (commitCount > 1) {
         error """
-❌ PR POLICY VIOLATION
+❌ PR VALIDATION FAILED
 
-This Pull Request contains ${commitCount} commits.
-Only ONE commit is allowed per PR.
+This PR contains ${commitCount} commits.
+Only ONE commit is allowed.
 
-👉 Please squash your commits before raising the PR.
+Please squash your commits before raising the PR.
 
 How to fix:
 git rebase -i origin/${env.CHANGE_TARGET}
 # squash commits
 git push -f
-
-Target branch : ${env.CHANGE_TARGET}
-Source branch : ${env.CHANGE_BRANCH}
 """
     }
 
-    echo "✅ PR commit validation passed (single commit)"
+    echo "✅ PR commit validation passed"
 }
