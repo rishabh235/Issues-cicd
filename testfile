@@ -1,6 +1,6 @@
-def validateSingleCommitInPR(String targetBranch) {
+def call(String targetBranch, String prId) {
 
-    if (!gitPullRequestId || gitPullRequestId == 'NA') {
+    if (!prId || prId == 'NA') {
         echo "Not a PR build. Skipping atomic commit validation."
         return
     }
@@ -9,12 +9,11 @@ def validateSingleCommitInPR(String targetBranch) {
         error "Target branch is empty. Cannot validate atomic commit."
     }
 
-    // Remove refs/heads if passed accidentally
     targetBranch = targetBranch.replaceAll('^refs/heads/', '')
 
     echo "Validating atomic commit against target branch: ${targetBranch}"
 
-    sh(script: "git fetch origin ${targetBranch}", label: "Fetch target branch")
+    sh "git fetch origin ${targetBranch}"
 
     def commitCount = sh(
         script: "git rev-list --count origin/${targetBranch}..HEAD",
@@ -33,3 +32,7 @@ Please squash commits before merging into '${targetBranch}'.
 
     echo "✅ Atomic commit validation passed."
 }
+
+
+
+
