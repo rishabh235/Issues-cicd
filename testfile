@@ -1,16 +1,13 @@
-def validateSingleCommitInPR() {
+def validateSingleCommitInPR(String targetBranch) {
 
-    // Skip if not a PR build
-    if (!env.CHANGE_ID && (gitPullRequestId == null || gitPullRequestId == 'NA')) {
+    // Skip validation if not a PR build
+    if (!gitPullRequestId || gitPullRequestId == 'NA') {
         echo "Not a PR build. Skipping atomic commit validation."
         return
     }
 
-    // Resolve target branch dynamically
-    def targetBranch = env.CHANGE_TARGET ?: gitBranch
-
-    if (!targetBranch) {
-        error "Unable to resolve target branch for PR. Atomic commit validation aborted."
+    if (!targetBranch?.trim()) {
+        error "Target branch is empty. Cannot validate atomic commit."
     }
 
     echo "Validating atomic commit for PR against target branch: ${targetBranch}"
