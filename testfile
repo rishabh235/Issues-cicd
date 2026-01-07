@@ -1,4 +1,7 @@
-def call(String targetBranch, String prId, boolean forceCheck = false) {
+def call(String sourceBranch,
+         String targetBranch,
+         String prId,
+         boolean forceCheck = false) {
 
     // Decide whether to run validation
     if (!forceCheck && (!prId || prId == 'NA')) {
@@ -6,28 +9,34 @@ def call(String targetBranch, String prId, boolean forceCheck = false) {
         return
     }
 
-    if (!targetBranch?.trim()) {
-        error "Target branch is empty. Cannot validate atomic commit."
+    if (!sourceBranch?.trim() || !targetBranch?.trim()) {
+        error "Source or Target branch is empty. Cannot validate atomic commit."
     }
 
+    sourceBranch = sourceBranch.replaceAll('^refs/heads/', '')
     targetBranch = targetBranch.replaceAll('^refs/heads/', '')
 
-    echo "Validating atomic commit against branch: ${targetBranch}"
-    echo "PR ID: ${prId ?: 'N/A'} | Force check: ${forceCheck}"
+    echo "Atomic commit validation"
+    echo "Source branch : ${sourceBranch}"
+    echo "Target branch : ${targetBranch}"
+    echo "PR ID         : ${prId ?: 'N/A'}"
+    echo "Force check   : ${forceCheck}"
 
+    // Fetch both branches explicitly
+    sh "git fetch origin ${sourceBranch}"
     sh "git fetch origin ${targetBranch}"
 
     def commitCount = sh(
-        script: "git rev-list --count origin/${targetBranch}..HEAD",
+        script: "git rev-list --count origin/${targetBranch}..origin/${sourceBranch}",
         returnStdout: true
     ).trim()
 
-    echo "Commit count in branch diff: ${commitCount}"
+    echo "Commits introduced by '${sourceBranch}' vs '${targetBranch}': ${commitCount}"
 
     if (commitCount.toInteger() > 1) {
         error """
 ❌ ATOMIC COMMIT ENFORCEMENT FAILED
-Branch '${targetBranch}' introduces ${commitCount} commits.
+Branch '${sourceBranch}' introduces ${commitCount} commits compared to '${targetBranch}'.
 Please squash commits before merge.
         """
     }
