@@ -1,7 +1,8 @@
-def call(String targetBranch, String prId) {
+def call(String targetBranch, String prId, boolean forceCheck = false) {
 
-    if (!prId || prId == 'NA') {
-        echo "Not a PR build. Skipping atomic commit validation."
+    // Decide whether to run validation
+    if (!forceCheck && (!prId || prId == 'NA')) {
+        echo "Not a PR build and FORCE_ATOMIC_CHECK=false. Skipping atomic commit validation."
         return
     }
 
@@ -11,7 +12,8 @@ def call(String targetBranch, String prId) {
 
     targetBranch = targetBranch.replaceAll('^refs/heads/', '')
 
-    echo "Validating atomic commit against target branch: ${targetBranch}"
+    echo "Validating atomic commit against branch: ${targetBranch}"
+    echo "PR ID: ${prId ?: 'N/A'} | Force check: ${forceCheck}"
 
     sh "git fetch origin ${targetBranch}"
 
@@ -20,19 +22,15 @@ def call(String targetBranch, String prId) {
         returnStdout: true
     ).trim()
 
-    echo "Commit count in PR: ${commitCount}"
+    echo "Commit count in branch diff: ${commitCount}"
 
     if (commitCount.toInteger() > 1) {
         error """
 ❌ ATOMIC COMMIT ENFORCEMENT FAILED
-PR contains ${commitCount} commits.
-Please squash commits before merging into '${targetBranch}'.
+Branch '${targetBranch}' introduces ${commitCount} commits.
+Please squash commits before merge.
         """
     }
 
     echo "✅ Atomic commit validation passed."
 }
-
-
-
-
