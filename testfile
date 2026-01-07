@@ -1,45 +1,48 @@
-def call(String sourceBranch,
-         String targetBranch,
-         String prId,
-         boolean forceCheck = false) {
+def call() {
 
-    // Decide whether to run validation
-    if (!forceCheck && (!prId || prId == 'NA')) {
-        echo "Not a PR build and FORCE_ATOMIC_CHECK=false. Skipping atomic commit validation."
+    // Run only for PR builds
+    if (!env.CHANGE_ID) {
+        echo "Not a PR build. Skipping single-commit validation."
         return
     }
 
-    if (!sourceBranch?.trim() || !targetBranch?.trim()) {
-        error "Source or Target branch is empty. Cannot validate atomic commit."
-    }
+    echo "PR detected: #${env.CHANGE_ID}"
+    echo "Source Branch : ${env.CHANGE_BRANCH}"
+    echo "Target Branch : ${env.CHANGE_TARGET}"
 
-    sourceBranch = sourceBranch.replaceAll('^refs/heads/', '')
-    targetBranch = targetBranch.replaceAll('^refs/heads/', '')
+    // Ensure target branch is available locally
+    sh """
+        git fetch origin ${env.CHANGE_TARGET}
+    """
 
-    echo "Atomic commit validation"
-    echo "Source branch : ${sourceBranch}"
-    echo "Target branch : ${targetBranch}"
-    echo "PR ID         : ${prId ?: 'N/A'}"
-    echo "Force check   : ${forceCheck}"
-
-    // Fetch both branches explicitly
-    sh "git fetch origin ${sourceBranch}"
-    sh "git fetch origin ${targetBranch}"
-
+    // Count commits in PR
     def commitCount = sh(
-        script: "git rev-list --count origin/${targetBranch}..origin/${sourceBranch}",
+        script: """
+            git rev-list --count origin/${env.CHANGE_TARGET}..HEAD
+        """,
         returnStdout: true
-    ).trim()
+    ).trim().toInteger()
 
-    echo "Commits introduced by '${sourceBranch}' vs '${targetBranch}': ${commitCount}"
+    echo "Commit count in PR: ${commitCount}"
 
-    if (commitCount.toInteger() > 1) {
+    if (commitCount > 1) {
         error """
-❌ ATOMIC COMMIT ENFORCEMENT FAILED
-Branch '${sourceBranch}' introduces ${commitCount} commits compared to '${targetBranch}'.
-Please squash commits before merge.
-        """
+❌ PR POLICY VIOLATION
+
+This Pull Request contains ${commitCount} commits.
+Only ONE commit is allowed per PR.
+
+👉 Please squash your commits before raising the PR.
+
+How to fix:
+git rebase -i origin/${env.CHANGE_TARGET}
+# squash commits
+git push -f
+
+Target branch : ${env.CHANGE_TARGET}
+Source branch : ${env.CHANGE_BRANCH}
+"""
     }
 
-    echo "✅ Atomic commit validation passed."
+    echo "✅ PR commit validation passed (single commit)"
 }
