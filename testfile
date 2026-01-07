@@ -1,6 +1,5 @@
 def validateSingleCommitInPR(String targetBranch) {
 
-    // Skip validation if not a PR build
     if (!gitPullRequestId || gitPullRequestId == 'NA') {
         echo "Not a PR build. Skipping atomic commit validation."
         return
@@ -10,9 +9,12 @@ def validateSingleCommitInPR(String targetBranch) {
         error "Target branch is empty. Cannot validate atomic commit."
     }
 
-    echo "Validating atomic commit for PR against target branch: ${targetBranch}"
+    // Remove refs/heads if passed accidentally
+    targetBranch = targetBranch.replaceAll('^refs/heads/', '')
 
-    sh "git fetch origin ${targetBranch}"
+    echo "Validating atomic commit against target branch: ${targetBranch}"
+
+    sh(script: "git fetch origin ${targetBranch}", label: "Fetch target branch")
 
     def commitCount = sh(
         script: "git rev-list --count origin/${targetBranch}..HEAD",
@@ -22,11 +24,11 @@ def validateSingleCommitInPR(String targetBranch) {
     echo "Commit count in PR: ${commitCount}"
 
     if (commitCount.toInteger() > 1) {
-        error("""
+        error """
 ❌ ATOMIC COMMIT ENFORCEMENT FAILED
 PR contains ${commitCount} commits.
 Please squash commits before merging into '${targetBranch}'.
-        """)
+        """
     }
 
     echo "✅ Atomic commit validation passed."
