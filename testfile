@@ -1,40 +1,48 @@
 def call() {
 
-    // 🔒 HARD-CODED BASE BRANCH (change later if needed)
-    def baseBranch = 'atomic-test'
+    // 🔒 HARD-CODED BRANCHES
+    def SOURCE_BRANCH = 'atomic-test2'
+    def TARGET_BRANCH = 'atomic-test'
 
-    echo "Validating single-commit policy"
-    echo "Base branch (hardcoded) : ${baseBranch}"
+    echo "========================================"
+    echo "Hardcoded PR Commit Validation"
+    echo "Source Branch : ${SOURCE_BRANCH}"
+    echo "Target Branch : ${TARGET_BRANCH}"
+    echo "========================================"
 
-    // Current branch (for visibility only)
-    def currentBranch = sh(
-        script: 'git rev-parse --abbrev-ref HEAD',
-        returnStdout: true
-    ).trim()
+    // Clean + fetch everything
+    sh '''
+        git reset --hard
+        git clean -fd
+        git fetch --all
+    '''
 
-    echo "Current checked-out branch : ${currentBranch}"
+    // Ensure correct branch is checked out
+    sh """
+        git checkout ${SOURCE_BRANCH}
+        git pull origin ${SOURCE_BRANCH}
+    """
 
-    // Ensure base branch is present locally
-    sh "git fetch origin ${baseBranch}"
-
-    // Count commits ahead of base branch
+    // Count commits difference
     def commitCount = sh(
-        script: "git rev-list --count origin/${baseBranch}..HEAD",
+        script: "git rev-list --count origin/${TARGET_BRANCH}..origin/${SOURCE_BRANCH}",
         returnStdout: true
     ).trim().toInteger()
 
-    echo "Commits ahead of ${baseBranch}: ${commitCount}"
+    echo "Commits from ${SOURCE_BRANCH} → ${TARGET_BRANCH}: ${commitCount}"
 
     if (commitCount > 1) {
         error """
-❌ COMMIT POLICY VIOLATION
+❌ COMMIT POLICY FAILED
 
-Branch '${currentBranch}' has ${commitCount} commits ahead of '${baseBranch}'.
-Only ONE commit is allowed before merge.
+Branch '${SOURCE_BRANCH}' has ${commitCount} commits
+that are not present in '${TARGET_BRANCH}'.
 
-Please squash your commits.
+Only ONE commit is allowed.
+
+👉 Please squash commits before merge.
 """
     }
 
-    echo "✅ Single-commit validation passed"
+    echo "✅ Commit policy passed (single commit)"
 }
