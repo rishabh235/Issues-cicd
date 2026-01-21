@@ -1,48 +1,46 @@
-def call() {
+def call(String manifestFileType, String pcfFoundation = null) {
 
-    // 🔒 HARD-CODED BRANCHES
-    def SOURCE_BRANCH = 'atomic-test2'
-    def TARGET_BRANCH = 'atomic-test'
+    println "DEBUG: loadManifestMappings called with:"
+    println "DEBUG: manifestFileType = ${manifestFileType}"
+    println "DEBUG: pcfFoundation     = ${pcfFoundation}"
 
-    echo "========================================"
-    echo "Hardcoded PR Commit Validation"
-    echo "Source Branch : ${SOURCE_BRANCH}"
-    echo "Target Branch : ${TARGET_BRANCH}"
-    echo "========================================"
+    def manifestMapFile = libraryResource('pipeline-global-config/manifest-mappings.yml')
+    println "DEBUG: Loaded manifest-mappings.yml content length = ${manifestMapFile?.length()}"
 
-    // Clean + fetch everything
-    sh '''
-        git reset --hard
-        git clean -fd
-        git fetch --all
-    '''
+    def manifestMapData = readYaml(text: manifestMapFile)
+    println "DEBUG: Parsed YAML keys = ${manifestMapData?.keySet()}"
 
-    // Ensure correct branch is checked out
-    sh """
-        git checkout ${SOURCE_BRANCH}
-        git pull origin ${SOURCE_BRANCH}
-    """
+    def manifestMap = manifestMapData[manifestFileType]
+    println "DEBUG: Raw manifestMap for type '${manifestFileType}' = ${manifestMap}"
 
-    // Count commits difference
-    def commitCount = sh(
-        script: "git rev-list --count origin/${TARGET_BRANCH}..origin/${SOURCE_BRANCH}",
-        returnStdout: true
-    ).trim().toInteger()
-
-    echo "Commits from ${SOURCE_BRANCH} → ${TARGET_BRANCH}: ${commitCount}"
-
-    if (commitCount > 1) {
-        error """
-❌ COMMIT POLICY FAILED
-
-Branch '${SOURCE_BRANCH}' has ${commitCount} commits
-that are not present in '${TARGET_BRANCH}'.
-
-Only ONE commit is allowed.
-
-👉 Please squash commits before merge.
-"""
+    if (!(manifestMap instanceof Map) || !manifestMap) {
+        buildFailed("Manifest mappings are empty or invalid for type: ${manifestFileType}")
     }
 
-    echo "✅ Commit policy passed (single commit)"
+    def resolvedManifestMap = manifestMap.collectMany { indexType, groupMap ->
+        println "DEBUG: Processing indexType = ${indexType}, groupMap = ${groupMap}"
+
+        groupMap.collect { foundation, fileName ->
+            println "DEBUG: Mapping foundation=${foundation}, fileName=${fileName}, indexType=${indexType}"
+            [
+                foundation: foundation,
+                fileName  : fileName,
+                indexType : indexType
+            ]
+        }
+    }
+
+    println "DEBUG: Resolved manifest map before foundation filter = ${resolvedManifestMap}"
+
+    if (pcfFoundation) {
+        resolvedManifestMap = resolvedManifestMap.findAll { it.foundation == pcfFoundation }
+
+        println "DEBUG: Resolved manifest map after filtering for foundation '${pcfFoundation}' = ${resolvedManifestMap}"
+
+        if (!resolvedManifestMap) {
+            buildFailed("No manifest mappings found for foundation: ${pcfFoundation} and type: ${manifestFileType}")
+        }
+    }
+
+    return resolvedManifestMap
 }
