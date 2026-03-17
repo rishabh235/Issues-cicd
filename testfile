@@ -1,46 +1,41 @@
-def call(String manifestFileType, String pcfFoundation = null) {
+def baseFeaturePath = "src/test/resources/features"
 
-    println "DEBUG: loadManifestMappings called with:"
-    println "DEBUG: manifestFileType = ${manifestFileType}"
-    println "DEBUG: pcfFoundation     = ${pcfFoundation}"
+// Normalize featureFilePath
+if (featureFilePath?.trim()) {
+    def featureFiles = featureFilePath.split(',').collect { it.trim() }
 
-    def manifestMapFile = libraryResource('pipeline-global-config/manifest-mappings.yml')
-    println "DEBUG: Loaded manifest-mappings.yml content length = ${manifestMapFile?.length()}"
-
-    def manifestMapData = readYaml(text: manifestMapFile)
-    println "DEBUG: Parsed YAML keys = ${manifestMapData?.keySet()}"
-
-    def manifestMap = manifestMapData[manifestFileType]
-    println "DEBUG: Raw manifestMap for type '${manifestFileType}' = ${manifestMap}"
-
-    if (!(manifestMap instanceof Map) || !manifestMap) {
-        buildFailed("Manifest mappings are empty or invalid for type: ${manifestFileType}")
-    }
-
-    def resolvedManifestMap = manifestMap.collectMany { indexType, groupMap ->
-        println "DEBUG: Processing indexType = ${indexType}, groupMap = ${groupMap}"
-
-        groupMap.collect { foundation, fileName ->
-            println "DEBUG: Mapping foundation=${foundation}, fileName=${fileName}, indexType=${indexType}"
-            [
-                foundation: foundation,
-                fileName  : fileName,
-                indexType : indexType
-            ]
+    def updatedFeatureFiles = featureFiles.collect { file ->
+        if (file.contains('/')) {
+            return file
+        } else {
+            return "${baseFeaturePath}/${file}.feature"
         }
     }
 
-    println "DEBUG: Resolved manifest map before foundation filter = ${resolvedManifestMap}"
-
-    if (pcfFoundation) {
-        resolvedManifestMap = resolvedManifestMap.findAll { it.foundation == pcfFoundation }
-
-        println "DEBUG: Resolved manifest map after filtering for foundation '${pcfFoundation}' = ${resolvedManifestMap}"
-
-        if (!resolvedManifestMap) {
-            buildFailed("No manifest mappings found for foundation: ${pcfFoundation} and type: ${manifestFileType}")
-        }
-    }
-
-    return resolvedManifestMap
+    featureFilePath = updatedFeatureFiles.join(',')
 }
+
+println "INFO: Final Feature File Path -> ${featureFilePath}"
+
+
+
+cucumber 
+
+def baseFeaturePath = "src/test/resources/features"
+
+// Normalize featureFilePath (support both old & new)
+if (featureFilePath?.trim()) {
+    def featureFiles = featureFilePath.split(',').collect { it.trim() }
+
+    def updatedFeatureFiles = featureFiles.collect { file ->
+        if (file.contains('/')) {
+            return file   // already full path (old behavior)
+        } else {
+            return "${baseFeaturePath}/${file}.feature"  // new behavior
+        }
+    }
+
+    featureFilePath = updatedFeatureFiles.join(',')
+}
+
+println "INFO: Final Feature File Path -> ${featureFilePath}"
