@@ -1,41 +1,21 @@
 def baseFeaturePath = "src/test/resources/features"
 
-// Normalize featureFilePath
 if (featureFilePath?.trim()) {
+
     def featureFiles = featureFilePath.split(',').collect { it.trim() }
 
     def updatedFeatureFiles = featureFiles.collect { file ->
-        if (file.contains('/')) {
-            return file
-        } else {
-            return "${baseFeaturePath}/${file}.feature"
+
+        // ensure .feature extension
+        if (!file.endsWith(".feature")) {
+            file = "${file}.feature"
         }
+
+        return "${baseFeaturePath}/${file}"
     }
 
-    featureFilePath = updatedFeatureFiles.join(',')
-}
-
-println "INFO: Final Feature File Path -> ${featureFilePath}"
-
-
-
-cucumber 
-
-def baseFeaturePath = "src/test/resources/features"
-
-// Normalize featureFilePath (support both old & new)
-if (featureFilePath?.trim()) {
-    def featureFiles = featureFilePath.split(',').collect { it.trim() }
-
-    def updatedFeatureFiles = featureFiles.collect { file ->
-        if (file.contains('/')) {
-            return file   // already full path (old behavior)
-        } else {
-            return "${baseFeaturePath}/${file}.feature"  // new behavior
-        }
-    }
-
-    featureFilePath = updatedFeatureFiles.join(',')
+    // space-separated for Octane
+    featureFilePath = updatedFeatureFiles.join(' ')
 }
 
 println "INFO: Final Feature File Path -> ${featureFilePath}"
