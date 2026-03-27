@@ -1,27 +1,24 @@
-def baseFeaturePath = "src/test/resources/features"
+// 🔥 NEW LOGIC (ONLY ADD THIS BLOCK)
+    def baseFeaturePath = "src/test/resources/features"
 
-if (featureFilePath?.trim()) {
+    if (featureFilePath?.trim()) {
 
-    // 🔥 only check once on full input
-    if (!featureFilePath.contains('/')) {
+        // 👉 override ONLY if not absolute
+        if (!featureFilePath.contains('/')) {
 
-        def featureFiles = featureFilePath.split(',').collect { it.trim() }
+            def featureFiles = featureFilePath.split(',').collect { it.trim() }
 
-        def updatedFeatureFiles = featureFiles.collect { file ->
+            def updatedFeatureFiles = featureFiles.collect { file ->
 
-            if (!file.endsWith(".feature")) {
-                file = "${file}.feature"
+                if (!file.endsWith(".feature")) {
+                    file = "${file}.feature"
+                }
+
+                "${baseFeaturePath}/${file}"
             }
 
-            "${baseFeaturePath}/${file}"
+            featureFilePath = updatedFeatureFiles.join(',')
         }
-
-        // 👉 overwrite here
-        featureFilePath = updatedFeatureFiles.join(',')
     }
 
-    // ✅ NO else
-    // existing logic will continue as-is
-}
-
-println "INFO: Final Feature File Path -> ${featureFilePath}"
+    println "INFO: Final Feature File Path -> ${featureFilePath}"
