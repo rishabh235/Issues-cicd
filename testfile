@@ -2,20 +2,26 @@ def baseFeaturePath = "src/test/resources/features"
 
 if (featureFilePath?.trim()) {
 
-    def featureFiles = featureFilePath.split(',').collect { it.trim() }
+    // 🔥 only check once on full input
+    if (!featureFilePath.contains('/')) {
 
-    def updatedFeatureFiles = featureFiles.collect { file ->
+        def featureFiles = featureFilePath.split(',').collect { it.trim() }
 
-        // ensure .feature extension
-        if (!file.endsWith(".feature")) {
-            file = "${file}.feature"
+        def updatedFeatureFiles = featureFiles.collect { file ->
+
+            if (!file.endsWith(".feature")) {
+                file = "${file}.feature"
+            }
+
+            "${baseFeaturePath}/${file}"
         }
 
-        return "${baseFeaturePath}/${file}"
+        // 👉 overwrite here
+        featureFilePath = updatedFeatureFiles.join(',')
     }
 
-    // space-separated for Octane
-    featureFilePath = updatedFeatureFiles.join(' ')
+    // ✅ NO else
+    // existing logic will continue as-is
 }
 
 println "INFO: Final Feature File Path -> ${featureFilePath}"
